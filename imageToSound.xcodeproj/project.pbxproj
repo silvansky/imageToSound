@@ -8,6 +8,8 @@
 
 /* Begin PBXBuildFile section */
 		A35B8A0D29ED45C500DCFA8D /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = A35B8A0C29ED45C500DCFA8D /* main.swift */; };
+		A39BF8A829ED4F1000B4FEEE /* ArgumentParser in Frameworks */ = {isa = PBXBuildFile; productRef = A39BF8A729ED4F1000B4FEEE /* ArgumentParser */; };
+		A39BF8AD29ED83F800B4FEEE /* Progress in Frameworks */ = {isa = PBXBuildFile; productRef = A39BF8AC29ED83F800B4FEEE /* Progress */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -32,6 +34,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A39BF8A829ED4F1000B4FEEE /* ArgumentParser in Frameworks */,
+				A39BF8AD29ED83F800B4FEEE /* Progress in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -78,6 +82,10 @@
 			dependencies = (
 			);
 			name = imageToSound;
+			packageProductDependencies = (
+				A39BF8A729ED4F1000B4FEEE /* ArgumentParser */,
+				A39BF8AC29ED83F800B4FEEE /* Progress */,
+			);
 			productName = imageToSound;
 			productReference = A35B8A0929ED45C500DCFA8D /* imageToSound */;
 			productType = "com.apple.product-type.tool";
@@ -106,6 +114,10 @@
 				Base,
 			);
 			mainGroup = A35B8A0029ED45C500DCFA8D;
+			packageReferences = (
+				A39BF8A629ED4F1000B4FEEE /* XCRemoteSwiftPackageReference "swift-argument-parser" */,
+				A39BF8AB29ED83F800B4FEEE /* XCRemoteSwiftPackageReference "Progress" */,
+			);
 			productRefGroup = A35B8A0A29ED45C500DCFA8D /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -284,6 +296,38 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		A39BF8A629ED4F1000B4FEEE /* XCRemoteSwiftPackageReference "swift-argument-parser" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/apple/swift-argument-parser.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.0.0;
+			};
+		};
+		A39BF8AB29ED83F800B4FEEE /* XCRemoteSwiftPackageReference "Progress" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/jkandzi/Progress.swift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.4.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		A39BF8A729ED4F1000B4FEEE /* ArgumentParser */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A39BF8A629ED4F1000B4FEEE /* XCRemoteSwiftPackageReference "swift-argument-parser" */;
+			productName = ArgumentParser;
+		};
+		A39BF8AC29ED83F800B4FEEE /* Progress */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A39BF8AB29ED83F800B4FEEE /* XCRemoteSwiftPackageReference "Progress" */;
+			productName = Progress;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = A35B8A0129ED45C500DCFA8D /* Project object */;
 }
