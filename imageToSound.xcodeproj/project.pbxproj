@@ -76,6 +76,7 @@
 				A35B8A0529ED45C500DCFA8D /* Sources */,
 				A35B8A0629ED45C500DCFA8D /* Frameworks */,
 				A35B8A0729ED45C500DCFA8D /* CopyFiles */,
+				A35DCCB02B6D242A006CF4CE /* ShellScript */,
 			);
 			buildRules = (
 			);
@@ -126,6 +127,26 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		A35DCCB02B6D242A006CF4CE /* ShellScript */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "mkdir -p \"${SRCROOT}/bin\"\n\nTARGET=\"imageToSound\"\n\nln -sf \"${BUILT_PRODUCTS_DIR}/${TARGET}\" \"${SRCROOT}/bin/${TARGET}\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		A35B8A0529ED45C500DCFA8D /* Sources */ = {

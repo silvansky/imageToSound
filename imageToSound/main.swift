@@ -1,9 +1,3 @@
-//
-//  main.swift
-//  imageToSound
-//
-//  Created by Valentine Gorshkov on 17.04.2023.
-//
 
 import Foundation
 import AppKit
@@ -21,17 +15,20 @@ struct ImageToSound: ParsableCommand {
     var imagePath: String
 
     @Option(help: "Output sample rate")
-    var samplerate: Int = 22050
+    var samplerate: Int = 44100
 
     @Option(help: "Output frames per pixel")
-    var framesPerPixel: Int = 1000
+    var framesPerPixel: Int = 2000
 
     @Flag(help: "Invert image")
     var invert: Bool = false
 
-    func run() throws {
-        print("Image path: \(imagePath), sample rate: \(samplerate)")
+    var imageBasename: String {
+        let url = URL(filePath: imagePath) as NSURL
+        return url.deletingPathExtension!.lastPathComponent
+    }
 
+    func run() throws {
         guard let image = NSImage(contentsOf: URL(filePath: imagePath)) else {
             print("Can't read image: \(imagePath)")
             return
@@ -41,15 +38,12 @@ struct ImageToSound: ParsableCommand {
         let pixelData = cgImage.dataProvider?.data
         let data: UnsafePointer<UInt8> = CFDataGetBytePtr(pixelData)
 
-        print("Image loaded! \(image)")
         let totalSamples = framesPerPixel * Int(image.size.width)
         let height = Float32(image.size.height)
 
         var samples: [Float32] = []
         let scale: Float32 = 1.5
         var startTime: Int = 0
-
-        print("Amplitude scale: \(scale)")
 
         let alpha: Float32 = 4.25
         let maxFrequency = Float32(samplerate / 2)
@@ -64,10 +58,10 @@ struct ImageToSound: ParsableCommand {
                 if invert {
                     brightness = 1 - brightness
                 }
-                var strength = scale * 10 / pow(10, Float32(alpha - alpha * brightness))
-                if strength < scale * 0.01 {
-                    strength = 0
-                }
+                let strength = scale * 10 / pow(10, Float32(alpha - alpha * brightness))
+//                if strength < scale * 0.01 {
+//                    strength = 0
+//                }
                 let frameData: FrameData = FrameData(frequency: frequency, strength: strength)
                 framesForColumn.append(frameData)
             }
@@ -75,23 +69,11 @@ struct ImageToSound: ParsableCommand {
             startTime = startTime + framesPerPixel
         }
 
-        dumpSamples(samples: samples, start: 0, count: framesPerPixel * 2, suffix: "_raw")
-
         samples = normalizeSamples(samples)
-
-        dumpSamples(samples: samples, start: 0, count: framesPerPixel * 2, suffix: "_norm")
-
-//        samples = compressSamples(samples)
-//
-//        dumpSamples(samples: samples, start: 0, count: framesPerPixel * 2, suffix: "_compressed")
-//
-//        samples = normalizeSamples(samples)
-//
-//        dumpSamples(samples: samples, start: 0, count: framesPerPixel * 2, suffix: "_norm2")
 
         // Write out data
         let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: Double(samplerate), channels: 1, interleaved: false)!
-        let url = URL(fileURLWithPath: "\(imagePath).wav")
+        let url = URL(fileURLWithPath: "\(imageBasename).wav")
         let audioFile = try! AVAudioFile(forWriting: url, settings: format.settings)
 
         print("Writing audio to \(url)")
@@ -102,7 +84,11 @@ struct ImageToSound: ParsableCommand {
         }
         buffer.frameLength = AVAudioFrameCount(totalSamples)
 
-        try! audioFile.write(from: buffer)
+        do {
+            try audioFile.write(from: buffer)
+        } catch {
+            print("Failed to save results to file \(url): \(error)")
+        }
     }
 
     func generateSineWaveAudio(startTime: Int, frames: [FrameData]) -> [Float32] {
@@ -120,7 +106,7 @@ struct ImageToSound: ParsableCommand {
                 let k = f.strength
                 let frequency = f.frequency
                 let h = index % 2 == 0
-                let shift = Float32(index) / frequency
+                let shift = sqrt(3) * Float32(index) / frequency
 
                 if k > .ulpOfOne {
                     let arg = 2.0 * .pi * frequency * time + shift
@@ -133,12 +119,6 @@ struct ImageToSound: ParsableCommand {
         }
 
         return samples
-    }
-
-    func compressSamples(_ samples: [Float32]) -> [Float32] {
-        let thr: Float32 = 0.1
-        let ratio: Float32 = 10.0
-        return samples.map { abs($0) > thr ? $0 / ratio : $0 }
     }
 
     func normalizeSamples(_ samples: [Float32]) -> [Float32] {
@@ -163,8 +143,9 @@ struct ImageToSound: ParsableCommand {
         return NSColor(red: r, green: g, blue: b, alpha: a)
     }
 
+    // Debug only
     func dumpSamples(samples: [Float32], start: Int, count: Int, suffix: String = "") {
-        let url = URL(fileURLWithPath: "\(imagePath)\(suffix).csv")
+        let url = URL(fileURLWithPath: "\(imageBasename)\(suffix).csv")
         var csvData = ""
         for i in start..<(start + count) {
             let sample = samples[i]
