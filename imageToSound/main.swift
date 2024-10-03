@@ -53,7 +53,7 @@ struct ImageToSound: ParsableCommand {
 
         let alpha: Float32 = 4.25
         let maxFrequency: Float32 = Float32(samplerate / 2)
-        let minFrequency: Float32 = 200
+        let minFrequency: Float32 = 0
         let freqSpread: Float32 = maxFrequency - minFrequency
 
         for i in Progress(0..<Int(image.size.width)) {
@@ -62,14 +62,11 @@ struct ImageToSound: ParsableCommand {
             for j in 0..<Int(image.size.height) {
                 let color = getPixelColor(data: data, width: cgImage.width, pos: CGPoint(x: Double(i), y: Double(image.size.height - CGFloat(j))))!
                 let frequency = minFrequency + Float32(j + 1) / (height + 1) * freqSpread
-                var brightness = Float32(color.brightnessComponent)//Float32(color.redComponent + color.greenComponent + color.blueComponent) / 3
+                var brightness = Float32(color.brightnessComponent)
                 if invert {
                     brightness = 1 - brightness
                 }
                 let strength = scale * 10 / pow(10, Float32(alpha - alpha * brightness))
-//                if strength < scale * 0.01 {
-//                    strength = 0
-//                }
                 let frameData: FrameData = FrameData(frequency: frequency, strength: strength)
                 framesForColumn.append(frameData)
             }
