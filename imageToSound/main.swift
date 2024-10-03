@@ -130,7 +130,7 @@ struct ImageToSound: ParsableCommand {
                     k = (1 - rampValue) * previousFrames[index].strength + rampValue * f.strength
                 }
                 let h = index % 2 == 0
-                let shift: Float32 = 50 * Float32(index) / count
+                let shift: Float32 = 3 * .pi * Float32(index) / count
 
                 if k > .ulpOfOne {
                     let arg = 2.0 * .pi * frequency * (time + shift)
