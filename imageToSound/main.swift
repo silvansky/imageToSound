@@ -23,8 +23,17 @@ struct ImageToSound: ParsableCommand {
     @Option(help: "Output sample rate")
     var samplerate: Int = 44100
 
+    @Option(help: "Frequency lower limit")
+    var minFrequency: Int = 0
+
+    @Option(help: "Frequency upper limit. By default is sample rate / 2")
+    var maxFrequency: Int = -1
+
     @Option(help: "Output frames per pixel")
     var framesPerPixel: Int = 2000
+
+    @Option(help: "Ramp frames. By default is frame per pixel / 2")
+    var rampFrames: Int = -1
 
     @Flag(help: "Invert image")
     var invert: Bool = false
@@ -52,8 +61,8 @@ struct ImageToSound: ParsableCommand {
         var currentFrame: Int = 0
 
         let alpha: Float32 = 4.25
-        let maxFrequency: Float32 = Float32(samplerate / 2)
-        let minFrequency: Float32 = 0
+        let maxFrequency: Float32 = maxFrequency < 0 ? Float32(samplerate / 2) : Float32(maxFrequency)
+        let minFrequency: Float32 = Float32(minFrequency)
         let freqSpread: Float32 = maxFrequency - minFrequency
 
         for i in Progress(0..<Int(image.size.width)) {
