@@ -52,7 +52,7 @@ struct ImageToSound: ParsableCommand {
         var currentFrame: Int = 0
 
         let alpha: Float32 = 4.25
-        let maxFrequency: Float32 = Float32(samplerate / 6)
+        let maxFrequency: Float32 = Float32(samplerate / 2)
         let minFrequency: Float32 = 200
         let freqSpread: Float32 = maxFrequency - minFrequency
 
