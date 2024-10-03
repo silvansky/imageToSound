@@ -12,7 +12,6 @@ struct FrameData {
 
 /*
  TODO:
- - Ramping between frequencies
  - Parallel computation of frequencies
  */
 
