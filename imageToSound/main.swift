@@ -10,6 +10,12 @@ struct FrameData {
     var strength: Float32
 }
 
+/*
+ TODO:
+ - Ramping between frequencies
+ - Parallel computation of frequencies
+ */
+
 struct ImageToSound: ParsableCommand {
     @Argument(help: "Source image file path")
     var imagePath: String
@@ -43,17 +49,19 @@ struct ImageToSound: ParsableCommand {
 
         var samples: [Float32] = []
         let scale: Float32 = 1.5
-        var startTime: Int = 0
+        var currentFrame: Int = 0
 
         let alpha: Float32 = 4.25
-        let maxFrequency = Float32(samplerate / 2)
+        let maxFrequency: Float32 = Float32(samplerate / 6)
+        let minFrequency: Float32 = 200
+        let freqSpread: Float32 = maxFrequency - minFrequency
 
         for i in Progress(0..<Int(image.size.width)) {
             var framesForColumn: [FrameData] = []
 
             for j in 0..<Int(image.size.height) {
                 let color = getPixelColor(data: data, width: cgImage.width, pos: CGPoint(x: Double(i), y: Double(image.size.height - CGFloat(j))))!
-                let frequency = Float32(j + 1) / (height + 1) * maxFrequency
+                let frequency = minFrequency + Float32(j + 1) / (height + 1) * freqSpread
                 var brightness = Float32(color.brightnessComponent)//Float32(color.redComponent + color.greenComponent + color.blueComponent) / 3
                 if invert {
                     brightness = 1 - brightness
@@ -65,8 +73,8 @@ struct ImageToSound: ParsableCommand {
                 let frameData: FrameData = FrameData(frequency: frequency, strength: strength)
                 framesForColumn.append(frameData)
             }
-            samples.append(contentsOf: generateSineWaveAudio(startTime: startTime, frames: framesForColumn))
-            startTime = startTime + framesPerPixel
+            samples.append(contentsOf: generateSineWaveAudio(startFrame: currentFrame, frames: framesForColumn))
+            currentFrame = currentFrame + framesPerPixel
         }
 
         samples = normalizeSamples(samples)
@@ -76,7 +84,7 @@ struct ImageToSound: ParsableCommand {
         let url = URL(fileURLWithPath: "\(imageBasename).wav")
         let audioFile = try! AVAudioFile(forWriting: url, settings: format.settings)
 
-        print("Writing audio to \(url)")
+        print("Writing audio to \(url.absoluteString)")
 
         let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(totalSamples))!
         _ = buffer.floatChannelData?.pointee.withMemoryRebound(to: Float.self, capacity: totalSamples) {
@@ -87,17 +95,18 @@ struct ImageToSound: ParsableCommand {
         do {
             try audioFile.write(from: buffer)
         } catch {
-            print("Failed to save results to file \(url): \(error)")
+            print("Failed to save results to file \(url.absoluteString): \(error)")
         }
     }
 
-    func generateSineWaveAudio(startTime: Int, frames: [FrameData]) -> [Float32] {
+    func generateSineWaveAudio(startFrame: Int, frames: [FrameData]) -> [Float32] {
         let sampleRate = Float32(samplerate)
 
-        let times = (startTime..<(startTime + framesPerPixel)).map { Float32($0) / sampleRate }
+        let times = (startFrame..<(startFrame + framesPerPixel)).map { Float32($0) / sampleRate }
 
         var outputSamples: [Float32] = []
         outputSamples.reserveCapacity(times.count)
+        let count: Float32 = Float32(times.count)
 
         let samples = times.map { time in
             var result: Float32 = 0
@@ -106,10 +115,10 @@ struct ImageToSound: ParsableCommand {
                 let k = f.strength
                 let frequency = f.frequency
                 let h = index % 2 == 0
-                let shift = sqrt(3) * Float32(index) / frequency
+                let shift: Float32 = .pi * Float32(index) / count
 
                 if k > .ulpOfOne {
-                    let arg = 2.0 * .pi * frequency * time + shift
+                    let arg = 2.0 * .pi * frequency * (time + shift)
                     let sine = k * (h ? sin(arg) : cos(arg))
                     result += sine
                 }
@@ -123,7 +132,7 @@ struct ImageToSound: ParsableCommand {
 
     func normalizeSamples(_ samples: [Float32]) -> [Float32] {
         var absMax: Float32 = 0
-        let finalX: Float32 = 0.8
+        let finalX: Float32 = 0.5
         for s in samples {
             if abs(s) > absMax {
                 absMax = abs(s)
