@@ -43,6 +43,8 @@ struct ImageToSound: ParsableCommand {
         return url.deletingPathExtension!.lastPathComponent
     }
 
+    var realRampFrames: Int = 0
+
     func run() throws {
         guard let image = NSImage(contentsOf: URL(filePath: imagePath)) else {
             print("Can't read image: \(imagePath)")
@@ -64,6 +66,7 @@ struct ImageToSound: ParsableCommand {
         let maxFrequency: Float32 = maxFrequency < 0 ? Float32(samplerate / 2) : Float32(maxFrequency)
         let minFrequency: Float32 = Float32(minFrequency)
         let freqSpread: Float32 = maxFrequency - minFrequency
+        var previousFrames: [FrameData] = []
 
         for i in Progress(0..<Int(image.size.width)) {
             var framesForColumn: [FrameData] = []
@@ -79,8 +82,9 @@ struct ImageToSound: ParsableCommand {
                 let frameData: FrameData = FrameData(frequency: frequency, strength: strength)
                 framesForColumn.append(frameData)
             }
-            samples.append(contentsOf: generateSineWaveAudio(startFrame: currentFrame, frames: framesForColumn))
+            samples.append(contentsOf: generateSineWave(startFrame: currentFrame, frames: framesForColumn, previousFrames: previousFrames))
             currentFrame = currentFrame + framesPerPixel
+            previousFrames = framesForColumn
         }
 
         samples = normalizeSamples(samples)
@@ -105,7 +109,7 @@ struct ImageToSound: ParsableCommand {
         }
     }
 
-    func generateSineWaveAudio(startFrame: Int, frames: [FrameData]) -> [Float32] {
+    func generateSineWave(startFrame: Int, frames: [FrameData], previousFrames: [FrameData]) -> [Float32] {
         let sampleRate = Float32(samplerate)
 
         let times = (startFrame..<(startFrame + framesPerPixel)).map { Float32($0) / sampleRate }
@@ -113,15 +117,21 @@ struct ImageToSound: ParsableCommand {
         var outputSamples: [Float32] = []
         outputSamples.reserveCapacity(times.count)
         let count: Float32 = Float32(times.count)
+        let rampNeeded = previousFrames.count > 0
+        let realRampFrames: Int = rampFrames < 0 ? framesPerPixel / 2 : rampFrames
 
-        let samples = times.map { time in
+        let samples = times.enumerated().map { frameNumber, time in
             var result: Float32 = 0
 
             for (index, f) in frames.enumerated() {
-                let k = f.strength
-                let frequency = f.frequency
+                var k = f.strength
+                let frequency: Float32 = f.frequency
+                if rampNeeded && (frameNumber < realRampFrames) {
+                    let rampValue: Float32 = Float32(frameNumber) / Float32(realRampFrames)
+                    k = (1 - rampValue) * previousFrames[index].strength + rampValue * f.strength
+                }
                 let h = index % 2 == 0
-                let shift: Float32 = .pi * Float32(index) / count
+                let shift: Float32 = 50 * Float32(index) / count
 
                 if k > .ulpOfOne {
                     let arg = 2.0 * .pi * frequency * (time + shift)
