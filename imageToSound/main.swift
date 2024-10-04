@@ -37,7 +37,7 @@ struct ImageToSound: ParsableCommand {
     @Flag(help: "Invert image")
     var invert: Bool = false
 
-    @Flag(help: "Use logarithmic scale instead of linear")
+    @Flag(help: "Use logarithmic scale instead of linear, overrides min and max frequency default values")
     var logScale: Bool = false
 
     var imageBasename: String {
@@ -65,13 +65,10 @@ struct ImageToSound: ParsableCommand {
         var currentFrame: Int = 0
 
         let alpha: Float32 = 4.25
-        let maxFrequency: Float32 = maxFrequency < 0 ? Float32(samplerate / 2) : Float32(maxFrequency)
-        let minFrequency: Float32 = Float32(minFrequency)
+        let maxFrequency: Float32 = (logScale || (maxFrequency < 0)) ? Float32(samplerate / 2) : Float32(maxFrequency)
+        let minFrequency: Float32 = logScale ? 20 : Float32(minFrequency)
         let freqSpread: Float32 = maxFrequency - minFrequency
         var previousFrames: [FrameData] = []
-
-        let n: Float32 = pow(maxFrequency / minFrequency, 1 / height)
-        let b: Float32 = log(minFrequency) / log(n)
 
         for i in Progress(0..<Int(image.size.width)) {
             var framesForColumn: [FrameData] = []
@@ -80,19 +77,27 @@ struct ImageToSound: ParsableCommand {
                 let color = getPixelColor(data: data, width: cgImage.width, pos: CGPoint(x: Double(i), y: Double(image.size.height - CGFloat(j))))!
                 let frequency: Float32
                 if logScale {
-                    frequency = pow(n, Float32(j)) * pow(n, b)
+                    // Based on ffmpeg implementation
+                    // f = 2 ^ ( (y / height) * (log2(max) - log2(min)) + log2(min) )
+                    frequency = pow(2, Float32(j) / height * (log2(maxFrequency) - log2(minFrequency)) + log2(minFrequency))
                 } else {
                     frequency = minFrequency + Float32(j + 1) / (height + 1) * freqSpread
                 }
+
                 var brightness = Float32(color.brightnessComponent)
+
+                // TODO: Debug the bottom line
                 if invert {
                     brightness = 1 - brightness
                 }
+
                 let strength = scale * 10 / pow(10, Float32(alpha - alpha * brightness))
                 let frameData: FrameData = FrameData(frequency: frequency, strength: strength)
                 framesForColumn.append(frameData)
             }
+
             samples.append(contentsOf: generateSineWave(startFrame: currentFrame, frames: framesForColumn, previousFrames: previousFrames))
+
             currentFrame = currentFrame + framesPerPixel
             previousFrames = framesForColumn
         }
