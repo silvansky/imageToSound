@@ -22,8 +22,8 @@ struct ImageToSound: ParsableCommand {
     @Option(help: "Output sample rate")
     var samplerate: Int = 44100
 
-    @Option(help: "Frequency lower limit")
-    var minFrequency: Int = 0
+    @Option(help: "Frequency lower limit, must be > 0")
+    var minFrequency: Int = 20
 
     @Option(help: "Frequency upper limit. By default is sample rate / 2")
     var maxFrequency: Int = -1
@@ -36,6 +36,9 @@ struct ImageToSound: ParsableCommand {
 
     @Flag(help: "Invert image")
     var invert: Bool = false
+
+    @Flag(help: "Use logarithmic scale instead of linear")
+    var logScale: Bool = false
 
     var imageBasename: String {
         let url = URL(filePath: imagePath) as NSURL
@@ -67,12 +70,20 @@ struct ImageToSound: ParsableCommand {
         let freqSpread: Float32 = maxFrequency - minFrequency
         var previousFrames: [FrameData] = []
 
+        let n: Float32 = pow(maxFrequency / minFrequency, 1 / height)
+        let b: Float32 = log(minFrequency) / log(n)
+
         for i in Progress(0..<Int(image.size.width)) {
             var framesForColumn: [FrameData] = []
 
             for j in 0..<Int(image.size.height) {
                 let color = getPixelColor(data: data, width: cgImage.width, pos: CGPoint(x: Double(i), y: Double(image.size.height - CGFloat(j))))!
-                let frequency = minFrequency + Float32(j + 1) / (height + 1) * freqSpread
+                let frequency: Float32
+                if logScale {
+                    frequency = pow(n, Float32(j)) * pow(n, b)
+                } else {
+                    frequency = minFrequency + Float32(j + 1) / (height + 1) * freqSpread
+                }
                 var brightness = Float32(color.brightnessComponent)
                 if invert {
                     brightness = 1 - brightness
