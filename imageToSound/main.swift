@@ -5,6 +5,28 @@ import AVFoundation
 import Accelerate
 import Progress
 
+struct Band {
+    let fftSize: Int
+    let hopSize: Int
+    let freqLow: Float       // ramp-in starts here (silent below)
+    let freqLowFull: Float   // full magnitude from here
+    let freqHighFull: Float  // full magnitude up to here
+    let freqHigh: Float      // ramp-out ends here (silent above)
+
+    func weight(_ f: Float) -> Float {
+        if f <= freqLow || f >= freqHigh { return 0 }
+        if f < freqLowFull && freqLowFull > freqLow {
+            let r = (f - freqLow) / (freqLowFull - freqLow)
+            return 0.5 * (1 - cos(.pi * r))
+        }
+        if f > freqHighFull && freqHigh > freqHighFull {
+            let r = (f - freqHighFull) / (freqHigh - freqHighFull)
+            return 0.5 * (1 + cos(.pi * r))
+        }
+        return 1
+    }
+}
+
 struct ImageToSound: ParsableCommand {
     @Argument(help: "Source image file path")
     var imagePath: String
@@ -42,6 +64,9 @@ struct ImageToSound: ParsableCommand {
     @Flag(help: "Use logarithmic frequency scale")
     var logScale: Bool = false
 
+    @Flag(help: "Multiresolution STFT (3 bands: large FFT at low freq, small at high)")
+    var multiresolution: Bool = false
+
     @Option(help: "Output directory")
     var outputDir: String = "."
 
@@ -64,28 +89,68 @@ struct ImageToSound: ParsableCommand {
         let bytesPerPixel = cgImage.bitsPerPixel / 8
         let bytesPerRow = cgImage.bytesPerRow
 
-        let hop = hopSize > 0 ? hopSize : fftSize / 4
-        let maxFreq: Float = (logScale || maxFrequency < 0) ? Float(samplerate) / 2 : Float(maxFrequency)
-        let minFreq: Float = max(1, Float(minFrequency))
-
-        let halfFFT = fftSize / 2
         let audioLength = framesPerPixel * width
+        let sampleRate = Float(samplerate)
+        let nyq = sampleRate / 2
+
+        let bands: [Band]
+        if multiresolution {
+            bands = [
+                Band(fftSize: 16384, hopSize: 4096, freqLow: 0,    freqLowFull: 0,    freqHighFull: 250,  freqHigh: 500),
+                Band(fftSize: 4096,  hopSize: 1024, freqLow: 250,  freqLowFull: 500,  freqHighFull: 2500, freqHigh: 5000),
+                Band(fftSize: 1024,  hopSize: 256,  freqLow: 2500, freqLowFull: 5000, freqHighFull: nyq,  freqHigh: nyq),
+            ]
+        } else {
+            let hop = hopSize > 0 ? hopSize : fftSize / 4
+            bands = [Band(fftSize: fftSize, hopSize: hop, freqLow: -1, freqLowFull: -1, freqHighFull: nyq + 1, freqHigh: nyq + 1)]
+        }
+
+        print("Image \(width)×\(height) → \(audioLength) samples (\(String(format: "%.2f", Float(audioLength)/sampleRate))s), logScale=\(logScale), multires=\(multiresolution)")
+
+        var combined = [Float](repeating: 0, count: audioLength)
+        for (i, band) in bands.enumerated() {
+            print("Band \(i+1)/\(bands.count): FFT=\(band.fftSize), hop=\(band.hopSize), \(Int(band.freqLow))..\(Int(band.freqHigh)) Hz")
+            let signal = synthesize(
+                band: band,
+                data: data,
+                width: width, height: height,
+                bytesPerPixel: bytesPerPixel, bytesPerRow: bytesPerRow,
+                audioLength: audioLength
+            )
+            for j in 0..<audioLength {
+                combined[j] += signal[j]
+            }
+        }
+
+        let normalized = normalize(combined, peak: 0.5)
+
+        let fm = FileManager.default
+        if !fm.fileExists(atPath: outputDir) {
+            try fm.createDirectory(atPath: outputDir, withIntermediateDirectories: true)
+        }
+        let url = URL(fileURLWithPath: "\(outputDir)/\(imageBasename).wav")
+        try writeWAV(samples: normalized, url: url, sampleRate: samplerate)
+        print("Wrote \(url.path)")
+    }
+
+    func synthesize(band: Band, data: UnsafePointer<UInt8>, width: Int, height: Int, bytesPerPixel: Int, bytesPerRow: Int, audioLength: Int) -> [Float] {
+        let halfFFT = band.fftSize / 2
         let signalLength = audioLength + 2 * halfFFT
-        let numFrames = (signalLength - fftSize) / hop + 1
+        let numFrames = (signalLength - band.fftSize) / band.hopSize + 1
         let numBins = halfFFT + 1
         let sampleRate = Float(samplerate)
+        let maxFreq: Float = (logScale || maxFrequency < 0) ? sampleRate / 2 : Float(maxFrequency)
+        let minFreq: Float = max(1, Float(minFrequency))
 
-        print("Image \(width)×\(height) → \(audioLength) samples (\(String(format: "%.2f", Float(audioLength)/sampleRate))s)")
-        print("STFT: fft=\(fftSize), hop=\(hop), frames=\(numFrames), bins=\(numBins), logScale=\(logScale)")
-
-        // Build magnitude spectrogram from image
         var magnitudes = [Float](repeating: 0, count: numFrames * numBins)
         for f in 0..<numFrames {
-            let audioPos = f * hop
+            let audioPos = f * band.hopSize
             let col = min(width - 1, max(0, audioPos / framesPerPixel))
 
             for k in 0..<numBins {
-                let freq = Float(k) * sampleRate / Float(fftSize)
+                let freq = Float(k) * sampleRate / Float(band.fftSize)
+                let w = band.weight(freq)
+                if w <= 0 { continue }
                 if freq < minFreq || freq > maxFreq { continue }
 
                 let yNorm: Float
@@ -96,7 +161,6 @@ struct ImageToSound: ParsableCommand {
                 }
                 if yNorm < 0 || yNorm > 1 { continue }
 
-                // Image y=0 is top; high freq → top of spectrogram
                 let imageY = min(height - 1, max(0, height - 1 - Int(yNorm * Float(height))))
 
                 let pixelInfo = imageY * bytesPerRow + col * bytesPerPixel
@@ -106,13 +170,11 @@ struct ImageToSound: ParsableCommand {
                 var brightness = 0.299 * r + 0.587 * g + 0.114 * b
                 if invert { brightness = 1 - brightness }
 
-                magnitudes[f * numBins + k] = pow(brightness, magCurve)
+                magnitudes[f * numBins + k] = pow(brightness, magCurve) * w
             }
         }
 
-        // Griffin-Lim phase reconstruction
-        let proc = STFTProcessor(fftSize: fftSize, hopSize: hop)
-        print("Running Griffin-Lim: \(glIterations) iters, momentum=\(glMomentum)")
+        let proc = STFTProcessor(fftSize: band.fftSize, hopSize: band.hopSize)
         let signal = proc.griffinLim(
             magnitude: magnitudes,
             numFrames: numFrames,
@@ -121,17 +183,7 @@ struct ImageToSound: ParsableCommand {
             momentum: glMomentum,
             signalLength: signalLength
         )
-
-        let trimmed = Array(signal[halfFFT..<(halfFFT + audioLength)])
-        let normalized = normalize(trimmed, peak: 0.5)
-
-        let fm = FileManager.default
-        if !fm.fileExists(atPath: outputDir) {
-            try fm.createDirectory(atPath: outputDir, withIntermediateDirectories: true)
-        }
-        let url = URL(fileURLWithPath: "\(outputDir)/\(imageBasename).wav")
-        try writeWAV(samples: normalized, url: url, sampleRate: samplerate)
-        print("Wrote \(url.path)")
+        return Array(signal[halfFFT..<(halfFFT + audioLength)])
     }
 
     func normalize(_ samples: [Float], peak: Float) -> [Float] {
@@ -241,7 +293,6 @@ final class STFTProcessor {
         return signal
     }
 
-    // Fast Griffin-Lim (Perraudin 2013). momentum=0 → classic GL.
     func griffinLim(magnitude: [Float], numFrames: Int, numBins: Int, iterations: Int, momentum: Float, signalLength: Int) -> [Float] {
         let total = numFrames * numBins
         var tReal = [Float](repeating: 0, count: total)
@@ -258,11 +309,9 @@ final class STFTProcessor {
         }
 
         for iter in Progress(0..<iterations) {
-            // P_C: project to consistent STFT
             let signal = istft(real: tReal, imag: tImag, numFrames: numFrames, numBins: numBins, signalLength: signalLength)
             stft(signal: signal, real: &consistentReal, imag: &consistentImag, numFrames: numFrames, numBins: numBins)
 
-            // P_M: enforce target magnitude
             var cReal = [Float](repeating: 0, count: total)
             var cImag = [Float](repeating: 0, count: total)
             for i in 0..<total {
@@ -276,7 +325,6 @@ final class STFTProcessor {
                 }
             }
 
-            // Momentum update: t = c + α(c - c_prev)
             if iter > 0 && momentum > 0 {
                 for i in 0..<total {
                     tReal[i] = cReal[i] + momentum * (cReal[i] - cPrevReal[i])
