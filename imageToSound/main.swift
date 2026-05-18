@@ -1,19 +1,9 @@
-
 import Foundation
 import AppKit
 import ArgumentParser
 import AVFoundation
+import Accelerate
 import Progress
-
-struct FrameData {
-    var frequency: Float32
-    var strength: Float32
-}
-
-/*
- TODO:
- - Parallel computation of frequencies
- */
 
 struct ImageToSound: ParsableCommand {
     @Argument(help: "Source image file path")
@@ -22,177 +12,285 @@ struct ImageToSound: ParsableCommand {
     @Option(help: "Output sample rate")
     var samplerate: Int = 44100
 
-    @Option(help: "Frequency lower limit, must be > 0")
+    @Option(help: "Frequency lower limit (Hz)")
     var minFrequency: Int = 20
 
-    @Option(help: "Frequency upper limit. By default is sample rate / 2")
+    @Option(help: "Frequency upper limit (Hz, default: samplerate/2)")
     var maxFrequency: Int = -1
 
     @Option(help: "Output frames per pixel")
     var framesPerPixel: Int = 2000
 
-    @Option(help: "Ramp frames. By default is frame per pixel / 2")
-    var rampFrames: Int = -1
+    @Option(help: "FFT size (power of 2)")
+    var fftSize: Int = 2048
 
-    @Flag(help: "Invert image")
+    @Option(help: "Hop size in samples (0 = fftSize/4)")
+    var hopSize: Int = 0
+
+    @Option(help: "Griffin-Lim iterations")
+    var glIterations: Int = 60
+
+    @Option(help: "Fast Griffin-Lim momentum (0 = classic GL, 0.99 recommended)")
+    var glMomentum: Float = 0.99
+
+    @Option(help: "Magnitude curve exponent (>1 emphasizes bright pixels)")
+    var magCurve: Float = 2.0
+
+    @Flag(help: "Invert image brightness")
     var invert: Bool = false
 
-    @Flag(help: "Use logarithmic scale instead of linear, overrides min and max frequency default values")
+    @Flag(help: "Use logarithmic frequency scale")
     var logScale: Bool = false
+
+    @Option(help: "Output directory")
+    var outputDir: String = "."
 
     var imageBasename: String {
         let url = URL(filePath: imagePath) as NSURL
         return url.deletingPathExtension!.lastPathComponent
     }
 
-    var realRampFrames: Int = 0
-
     func run() throws {
-        guard let image = NSImage(contentsOf: URL(filePath: imagePath)) else {
+        guard let image = NSImage(contentsOf: URL(filePath: imagePath)),
+              let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
             print("Can't read image: \(imagePath)")
             return
         }
+        let pixelData = cgImage.dataProvider!.data!
+        let data = CFDataGetBytePtr(pixelData)!
 
-        let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil)!
-        let pixelData = cgImage.dataProvider?.data
-        let data: UnsafePointer<UInt8> = CFDataGetBytePtr(pixelData)
+        let width = cgImage.width
+        let height = cgImage.height
+        let bytesPerPixel = cgImage.bitsPerPixel / 8
+        let bytesPerRow = cgImage.bytesPerRow
 
-        let totalSamples = framesPerPixel * Int(image.size.width)
-        let height = Float32(image.size.height)
+        let hop = hopSize > 0 ? hopSize : fftSize / 4
+        let maxFreq: Float = (logScale || maxFrequency < 0) ? Float(samplerate) / 2 : Float(maxFrequency)
+        let minFreq: Float = max(1, Float(minFrequency))
 
-        var samples: [Float32] = []
-        let scale: Float32 = 1.5
-        var currentFrame: Int = 0
+        let halfFFT = fftSize / 2
+        let audioLength = framesPerPixel * width
+        let signalLength = audioLength + 2 * halfFFT
+        let numFrames = (signalLength - fftSize) / hop + 1
+        let numBins = halfFFT + 1
+        let sampleRate = Float(samplerate)
 
-        let alpha: Float32 = 4.25
-        let maxFrequency: Float32 = (logScale || (maxFrequency < 0)) ? Float32(samplerate / 2) : Float32(maxFrequency)
-        let minFrequency: Float32 = logScale ? 20 : Float32(minFrequency)
-        let freqSpread: Float32 = maxFrequency - minFrequency
-        var previousFrames: [FrameData] = []
+        print("Image \(width)×\(height) → \(audioLength) samples (\(String(format: "%.2f", Float(audioLength)/sampleRate))s)")
+        print("STFT: fft=\(fftSize), hop=\(hop), frames=\(numFrames), bins=\(numBins), logScale=\(logScale)")
 
-        for i in Progress(0..<Int(image.size.width)) {
-            var framesForColumn: [FrameData] = []
+        // Build magnitude spectrogram from image
+        var magnitudes = [Float](repeating: 0, count: numFrames * numBins)
+        for f in 0..<numFrames {
+            let audioPos = f * hop
+            let col = min(width - 1, max(0, audioPos / framesPerPixel))
 
-            for j in 0..<Int(image.size.height) {
-                let color = getPixelColor(data: data, width: cgImage.width, pos: CGPoint(x: Double(i), y: Double(image.size.height - CGFloat(j))))!
-                let frequency: Float32
+            for k in 0..<numBins {
+                let freq = Float(k) * sampleRate / Float(fftSize)
+                if freq < minFreq || freq > maxFreq { continue }
+
+                let yNorm: Float
                 if logScale {
-                    // Based on ffmpeg implementation
-                    // f = 2 ^ ( (y / height) * (log2(max) - log2(min)) + log2(min) )
-                    frequency = pow(2, Float32(j) / height * (log2(maxFrequency) - log2(minFrequency)) + log2(minFrequency))
+                    yNorm = log2(freq / minFreq) / log2(maxFreq / minFreq)
                 } else {
-                    frequency = minFrequency + Float32(j + 1) / (height + 1) * freqSpread
+                    yNorm = (freq - minFreq) / (maxFreq - minFreq)
                 }
+                if yNorm < 0 || yNorm > 1 { continue }
 
-                var brightness = Float32(color.brightnessComponent)
+                // Image y=0 is top; high freq → top of spectrogram
+                let imageY = min(height - 1, max(0, height - 1 - Int(yNorm * Float(height))))
 
-                // TODO: Debug the bottom line
-                if invert {
-                    brightness = 1 - brightness
-                }
+                let pixelInfo = imageY * bytesPerRow + col * bytesPerPixel
+                let r = Float(data[pixelInfo]) / 255.0
+                let g = Float(data[pixelInfo + 1]) / 255.0
+                let b = Float(data[pixelInfo + 2]) / 255.0
+                var brightness = 0.299 * r + 0.587 * g + 0.114 * b
+                if invert { brightness = 1 - brightness }
 
-                let strength = scale * 10 / pow(10, Float32(alpha - alpha * brightness))
-                let frameData: FrameData = FrameData(frequency: frequency, strength: strength)
-                framesForColumn.append(frameData)
-            }
-
-            samples.append(contentsOf: generateSineWave(startFrame: currentFrame, frames: framesForColumn, previousFrames: previousFrames))
-
-            currentFrame = currentFrame + framesPerPixel
-            previousFrames = framesForColumn
-        }
-
-        samples = normalizeSamples(samples)
-
-        // Write out data
-        let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: Double(samplerate), channels: 1, interleaved: false)!
-        let url = URL(fileURLWithPath: "\(imageBasename).wav")
-        let audioFile = try! AVAudioFile(forWriting: url, settings: format.settings)
-
-        print("Writing audio to \(url.absoluteString)")
-
-        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(totalSamples))!
-        _ = buffer.floatChannelData?.pointee.withMemoryRebound(to: Float.self, capacity: totalSamples) {
-            memcpy($0, samples, totalSamples * MemoryLayout<Float>.size)
-        }
-        buffer.frameLength = AVAudioFrameCount(totalSamples)
-
-        do {
-            try audioFile.write(from: buffer)
-        } catch {
-            print("Failed to save results to file \(url.absoluteString): \(error)")
-        }
-    }
-
-    func generateSineWave(startFrame: Int, frames: [FrameData], previousFrames: [FrameData]) -> [Float32] {
-        let sampleRate = Float32(samplerate)
-
-        let times = (startFrame..<(startFrame + framesPerPixel)).map { Float32($0) / sampleRate }
-
-        var outputSamples: [Float32] = []
-        outputSamples.reserveCapacity(times.count)
-        let count: Float32 = Float32(times.count)
-        let rampNeeded = previousFrames.count > 0
-        let realRampFrames: Int = rampFrames < 0 ? framesPerPixel / 2 : rampFrames
-
-        let samples = times.enumerated().map { frameNumber, time in
-            var result: Float32 = 0
-
-            for (index, f) in frames.enumerated() {
-                var k = f.strength
-                let frequency: Float32 = f.frequency
-                if rampNeeded && (frameNumber < realRampFrames) {
-                    let rampValue: Float32 = Float32(frameNumber) / Float32(realRampFrames)
-                    k = (1 - rampValue) * previousFrames[index].strength + rampValue * f.strength
-                }
-                let h = index % 2 == 0
-                let shift: Float32 = 3 * .pi * Float32(index) / count
-
-                if k > .ulpOfOne {
-                    let arg = 2.0 * .pi * frequency * (time + shift)
-                    let sine = k * (h ? sin(arg) : cos(arg))
-                    result += sine
-                }
-            }
-
-            return result
-        }
-
-        return samples
-    }
-
-    func normalizeSamples(_ samples: [Float32]) -> [Float32] {
-        var absMax: Float32 = 0
-        let finalX: Float32 = 0.5
-        for s in samples {
-            if abs(s) > absMax {
-                absMax = abs(s)
+                magnitudes[f * numBins + k] = pow(brightness, magCurve)
             }
         }
 
-        return samples.map { finalX * $0 / absMax }
-    }
+        // Griffin-Lim phase reconstruction
+        let proc = STFTProcessor(fftSize: fftSize, hopSize: hop)
+        print("Running Griffin-Lim: \(glIterations) iters, momentum=\(glMomentum)")
+        let signal = proc.griffinLim(
+            magnitude: magnitudes,
+            numFrames: numFrames,
+            numBins: numBins,
+            iterations: glIterations,
+            momentum: glMomentum,
+            signalLength: signalLength
+        )
 
-    func getPixelColor(data: UnsafePointer<UInt8>, width: Int, pos: CGPoint) -> NSColor? {
-        let pixelInfo: Int = ((width * Int(pos.y)) + Int(pos.x)) * 4
-        let r = CGFloat(data[pixelInfo]) / CGFloat(255.0)
-        let g = CGFloat(data[pixelInfo + 1]) / CGFloat(255.0)
-        let b = CGFloat(data[pixelInfo + 2]) / CGFloat(255.0)
-        let a = CGFloat(data[pixelInfo + 3]) / CGFloat(255.0)
+        let trimmed = Array(signal[halfFFT..<(halfFFT + audioLength)])
+        let normalized = normalize(trimmed, peak: 0.5)
 
-        return NSColor(red: r, green: g, blue: b, alpha: a)
-    }
-
-    // Debug only
-    func dumpSamples(samples: [Float32], start: Int, count: Int, suffix: String = "") {
-        let url = URL(fileURLWithPath: "\(imageBasename)\(suffix).csv")
-        var csvData = ""
-        for i in start..<(start + count) {
-            let sample = samples[i]
-            let line = "\(i), \(sample)\n"
-            csvData.append(line)
+        let fm = FileManager.default
+        if !fm.fileExists(atPath: outputDir) {
+            try fm.createDirectory(atPath: outputDir, withIntermediateDirectories: true)
         }
-        try! csvData.data(using: .utf8)?.write(to: url)
+        let url = URL(fileURLWithPath: "\(outputDir)/\(imageBasename).wav")
+        try writeWAV(samples: normalized, url: url, sampleRate: samplerate)
+        print("Wrote \(url.path)")
+    }
+
+    func normalize(_ samples: [Float], peak: Float) -> [Float] {
+        var maxAbs: Float = 0
+        vDSP_maxmgv(samples, 1, &maxAbs, vDSP_Length(samples.count))
+        if maxAbs < 1e-8 { return samples }
+        var scale = peak / maxAbs
+        var result = [Float](repeating: 0, count: samples.count)
+        vDSP_vsmul(samples, 1, &scale, &result, 1, vDSP_Length(samples.count))
+        return result
+    }
+
+    func writeWAV(samples: [Float], url: URL, sampleRate: Int) throws {
+        if FileManager.default.fileExists(atPath: url.path) {
+            try? FileManager.default.removeItem(at: url)
+        }
+        let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: Double(sampleRate), channels: 1, interleaved: false)!
+        let audioFile = try AVAudioFile(forWriting: url, settings: format.settings)
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count))!
+        buffer.frameLength = AVAudioFrameCount(samples.count)
+        samples.withUnsafeBufferPointer { src in
+            buffer.floatChannelData!.pointee.update(from: src.baseAddress!, count: samples.count)
+        }
+        try audioFile.write(from: buffer)
+    }
+}
+
+final class STFTProcessor {
+    let fftSize: Int
+    let hopSize: Int
+    let window: [Float]
+    private let forwardSetup: OpaquePointer
+    private let inverseSetup: OpaquePointer
+
+    init(fftSize: Int, hopSize: Int) {
+        self.fftSize = fftSize
+        self.hopSize = hopSize
+        var w = [Float](repeating: 0, count: fftSize)
+        vDSP_hann_window(&w, vDSP_Length(fftSize), 0)
+        self.window = w
+        self.forwardSetup = vDSP_DFT_zop_CreateSetup(nil, vDSP_Length(fftSize), .FORWARD)!
+        self.inverseSetup = vDSP_DFT_zop_CreateSetup(nil, vDSP_Length(fftSize), .INVERSE)!
+    }
+
+    deinit {
+        vDSP_DFT_DestroySetup(forwardSetup)
+        vDSP_DFT_DestroySetup(inverseSetup)
+    }
+
+    func stft(signal: [Float], real: inout [Float], imag: inout [Float], numFrames: Int, numBins: Int) {
+        var inReal = [Float](repeating: 0, count: fftSize)
+        let inImag = [Float](repeating: 0, count: fftSize)
+        var outReal = [Float](repeating: 0, count: fftSize)
+        var outImag = [Float](repeating: 0, count: fftSize)
+
+        for f in 0..<numFrames {
+            let start = f * hopSize
+            for n in 0..<fftSize {
+                inReal[n] = signal[start + n] * window[n]
+            }
+            vDSP_DFT_Execute(forwardSetup, inReal, inImag, &outReal, &outImag)
+            for k in 0..<numBins {
+                real[f * numBins + k] = outReal[k]
+                imag[f * numBins + k] = outImag[k]
+            }
+        }
+    }
+
+    func istft(real: [Float], imag: [Float], numFrames: Int, numBins: Int, signalLength: Int) -> [Float] {
+        var signal = [Float](repeating: 0, count: signalLength)
+        var winSum = [Float](repeating: 0, count: signalLength)
+        var inReal = [Float](repeating: 0, count: fftSize)
+        var inImag = [Float](repeating: 0, count: fftSize)
+        var outReal = [Float](repeating: 0, count: fftSize)
+        var outImag = [Float](repeating: 0, count: fftSize)
+        let norm: Float = 1.0 / Float(fftSize)
+        let halfFFT = fftSize / 2
+
+        for f in 0..<numFrames {
+            let start = f * hopSize
+            for k in 0..<fftSize {
+                inReal[k] = 0
+                inImag[k] = 0
+            }
+            for k in 0..<numBins {
+                inReal[k] = real[f * numBins + k]
+                inImag[k] = imag[f * numBins + k]
+            }
+            for k in 1..<halfFFT {
+                inReal[fftSize - k] = real[f * numBins + k]
+                inImag[fftSize - k] = -imag[f * numBins + k]
+            }
+            vDSP_DFT_Execute(inverseSetup, inReal, inImag, &outReal, &outImag)
+            for n in 0..<fftSize {
+                let i = start + n
+                if i < signalLength {
+                    signal[i] += outReal[n] * window[n] * norm
+                    winSum[i] += window[n] * window[n]
+                }
+            }
+        }
+        for i in 0..<signalLength {
+            if winSum[i] > 1e-8 {
+                signal[i] /= winSum[i]
+            }
+        }
+        return signal
+    }
+
+    // Fast Griffin-Lim (Perraudin 2013). momentum=0 → classic GL.
+    func griffinLim(magnitude: [Float], numFrames: Int, numBins: Int, iterations: Int, momentum: Float, signalLength: Int) -> [Float] {
+        let total = numFrames * numBins
+        var tReal = [Float](repeating: 0, count: total)
+        var tImag = [Float](repeating: 0, count: total)
+        var cPrevReal = [Float](repeating: 0, count: total)
+        var cPrevImag = [Float](repeating: 0, count: total)
+        var consistentReal = [Float](repeating: 0, count: total)
+        var consistentImag = [Float](repeating: 0, count: total)
+
+        for i in 0..<total {
+            let phase = Float.random(in: 0..<(2 * .pi))
+            tReal[i] = magnitude[i] * cos(phase)
+            tImag[i] = magnitude[i] * sin(phase)
+        }
+
+        for iter in Progress(0..<iterations) {
+            // P_C: project to consistent STFT
+            let signal = istft(real: tReal, imag: tImag, numFrames: numFrames, numBins: numBins, signalLength: signalLength)
+            stft(signal: signal, real: &consistentReal, imag: &consistentImag, numFrames: numFrames, numBins: numBins)
+
+            // P_M: enforce target magnitude
+            var cReal = [Float](repeating: 0, count: total)
+            var cImag = [Float](repeating: 0, count: total)
+            for i in 0..<total {
+                let mag = sqrt(consistentReal[i] * consistentReal[i] + consistentImag[i] * consistentImag[i])
+                if mag > 1e-10 {
+                    cReal[i] = magnitude[i] * consistentReal[i] / mag
+                    cImag[i] = magnitude[i] * consistentImag[i] / mag
+                } else {
+                    cReal[i] = magnitude[i]
+                    cImag[i] = 0
+                }
+            }
+
+            // Momentum update: t = c + α(c - c_prev)
+            if iter > 0 && momentum > 0 {
+                for i in 0..<total {
+                    tReal[i] = cReal[i] + momentum * (cReal[i] - cPrevReal[i])
+                    tImag[i] = cImag[i] + momentum * (cImag[i] - cPrevImag[i])
+                }
+            } else {
+                tReal = cReal
+                tImag = cImag
+            }
+            cPrevReal = cReal
+            cPrevImag = cImag
+        }
+
+        return istft(real: tReal, imag: tImag, numFrames: numFrames, numBins: numBins, signalLength: signalLength)
     }
 }
 
