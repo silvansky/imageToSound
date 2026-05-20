@@ -9,6 +9,11 @@ bin/
 *.pkf
 imageToSound/imageToSound
 
+# Python
+.venv*/
+__pycache__/
+*.log
+
 # Xcode
 #
 build/
