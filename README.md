@@ -12,15 +12,10 @@ Plus `spectrogram.py` for high-resolution verification (images + videos).
 ## Build (Swift tool)
 
 ```sh
-xcodebuild -project imageToSound.xcodeproj -scheme imageToSound -configuration Release
+swift build -c release
 ```
 
-Binary lands in Xcode DerivedData. Find it via:
-
-```sh
-xcodebuild -project imageToSound.xcodeproj -scheme imageToSound -showBuildSettings \
-  | grep -i target_build_dir
-```
+Binary lands at `.build/release/imageToSound`. Requires macOS 13+ and Swift 5.9+.
 
 ## Python setup
 

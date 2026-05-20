@@ -9,6 +9,11 @@ bin/
 *.pkf
 imageToSound/imageToSound
 
+# SwiftPM
+.build/
+.swiftpm/
+Package.resolved
+
 # Python
 .venv*/
 __pycache__/
