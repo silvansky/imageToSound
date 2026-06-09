@@ -10,7 +10,6 @@ Per WAV file, produces:
   <base>_spectrum_cqt.png               Constant-Q transform (true log)
   <base>_spectrum_lin.mkv               scrolling video, linear freq axis
   <base>_spectrum_log.mkv               scrolling video, log freq axis
-  <base>_spectrum_cqt.mkv               static CQT + moving playhead
   <base>_spectrum_cqt_scroll.mkv        scrolling CQT video
 """
 
@@ -71,24 +70,6 @@ def encode_scroll_video(wide_png, wav, out_path, duration, pps, video_w, video_h
         sys.stderr.write(res.stderr.decode(errors="ignore")[-800:])
 
 
-def encode_static_video(static_png, wav, out_path, duration, color):
-    cmd = [
-        "ffmpeg", "-y", "-loop", "1", "-framerate", "30",
-        "-i", static_png, "-i", wav,
-        "-filter_complex",
-        f"[0:v]drawbox=x='iw*t/{duration}':y=0:w=5:h=ih:color={color}:t=fill,"
-        "format=yuv420p[v]",
-        "-map", "[v]", "-map", "1:a",
-        "-c:v", "libx264", "-c:a", "aac",
-        "-t", f"{duration:.3f}", "-shortest", out_path,
-    ]
-    res = subprocess.run(cmd, capture_output=True)
-    if res.returncode == 0:
-        print(f"wrote {out_path}")
-    else:
-        sys.stderr.write(res.stderr.decode(errors="ignore")[-800:])
-
-
 def make_scroll(spec_db, wav, base, suffix, duration, pps, video_w, video_h, cmap_name, db_floor):
     wide_w = max(video_w, int(pps * duration))
     arr = (np.clip(spec_db, db_floor, 0) - db_floor) / (-db_floor)
@@ -123,7 +104,6 @@ def main():
     ap.add_argument("--hop", type=int, default=2048, help="STFT/CQT hop length")
     ap.add_argument("--bins-per-octave", type=int, default=96, help="CQT bins per octave")
     ap.add_argument("--n-octaves", type=int, default=10, help="CQT octave count")
-    ap.add_argument("--playhead-color", default="cyan@0.9", help="ffmpeg color expr for static-video playhead")
     ap.add_argument("--no-static", action="store_true", help="skip static PNGs")
     ap.add_argument("--no-video", action="store_true", help="skip videos")
     ap.add_argument("--mode", choices=["lin", "log", "cqt", "all"], default="all",
@@ -193,9 +173,6 @@ def main():
         if want_cqt:
             make_scroll(C_db, args.wav, base, "cqt_scroll", duration,
                         args.pps, video_w, video_h, args.cmap, args.db_floor)
-            if os.path.exists(cqt_png):
-                encode_static_video(cqt_png, args.wav, f"{base}_spectrum_cqt.mkv",
-                                    duration, args.playhead_color)
 
 
 if __name__ == "__main__":

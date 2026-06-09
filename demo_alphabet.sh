@@ -11,7 +11,6 @@
 #   <OUT>/log/alphabet.wav                      Python CQT synthesis
 #   <OUT>/log/alphabet.wav_spectrum_cqt.png     CQT spectrogram
 #   <OUT>/log/alphabet.wav_spectrum_cqt_scroll.mkv    CQT scrolling video
-#   <OUT>/log/alphabet.wav_spectrum_cqt.mkv     CQT static + playhead
 
 set -e
 

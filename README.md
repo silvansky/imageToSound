@@ -134,7 +134,6 @@ python spectrogram.py <wav> [options]
 | `--hop <int>` | `2048` | STFT/CQT hop |
 | `--bins-per-octave <int>` | `96` | CQT density |
 | `--n-octaves <int>` | `10` | CQT octave count |
-| `--playhead-color <expr>` | `cyan@0.9` | ffmpeg color expr for static-video playhead |
 | `--no-static` | off | skip static PNGs |
 | `--no-video` | off | skip videos |
 | `--mode <lin\|log\|cqt\|all>` | `all` | which analyses to render |
@@ -149,7 +148,6 @@ Outputs (per input WAV named `foo.wav`):
 | `foo.wav_spectrum_lin.mkv` | scrolling video, linear axis |
 | `foo.wav_spectrum_log.mkv` | scrolling video, log axis |
 | `foo.wav_spectrum_cqt_scroll.mkv` | scrolling video, CQT |
-| `foo.wav_spectrum_cqt.mkv` | static CQT image + moving playhead overlay |
 
 ---
 
