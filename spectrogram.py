@@ -126,6 +126,8 @@ def main():
     ap.add_argument("--playhead-color", default="cyan@0.9", help="ffmpeg color expr for static-video playhead")
     ap.add_argument("--no-static", action="store_true", help="skip static PNGs")
     ap.add_argument("--no-video", action="store_true", help="skip videos")
+    ap.add_argument("--mode", choices=["lin", "log", "cqt", "all"], default="all",
+                    help="which analyses to render: 'lin'/'log' use STFT, 'cqt' uses Constant-Q, 'all' = everything")
     args = ap.parse_args()
 
     video_w, video_h = args.video_size
@@ -137,48 +139,63 @@ def main():
     duration = len(y) / sr
     base = args.wav
 
-    S = np.abs(librosa.stft(y, n_fft=args.n_fft, hop_length=args.hop))
-    S_db = librosa.amplitude_to_db(S, ref=np.max)
-    bin_hz = sr / args.n_fft
-    stft_title = f"STFT n_fft={args.n_fft} ({bin_hz:.2f} Hz/bin), hop={args.hop}"
+    want_stft = args.mode in ("lin", "log", "all")
+    want_cqt = args.mode in ("cqt", "all")
+    want_lin = args.mode in ("lin", "all")
+    want_log = args.mode in ("log", "all")
 
+    S_db = None
+    if want_stft:
+        S = np.abs(librosa.stft(y, n_fft=args.n_fft, hop_length=args.hop))
+        S_db = librosa.amplitude_to_db(S, ref=np.max)
+        bin_hz = sr / args.n_fft
+        stft_title = f"STFT n_fft={args.n_fft} ({bin_hz:.2f} Hz/bin), hop={args.hop}"
+
+    C_db = None
     n_bins_cqt = args.bins_per_octave * args.n_octaves
-    C = np.abs(librosa.cqt(
-        y, sr=sr, hop_length=args.hop, fmin=args.fmin,
-        n_bins=n_bins_cqt, bins_per_octave=args.bins_per_octave,
-    ))
-    C_db = librosa.amplitude_to_db(C, ref=np.max)
+    if want_cqt:
+        C = np.abs(librosa.cqt(
+            y, sr=sr, hop_length=args.hop, fmin=args.fmin,
+            n_bins=n_bins_cqt, bins_per_octave=args.bins_per_octave,
+        ))
+        C_db = librosa.amplitude_to_db(C, ref=np.max)
 
     cqt_png = f"{base}_spectrum_cqt.png"
 
     if not args.no_static:
-        render_static(S_db,
-            dict(sr=sr, hop_length=args.hop, x_axis="time", y_axis="linear"),
-            f"{base}_spectrum_lin_precise.png", f"{stft_title} | linear",
-            args.cmap, args.db_floor)
-        render_static(S_db,
-            dict(sr=sr, hop_length=args.hop, x_axis="time", y_axis="log"),
-            f"{base}_spectrum_log_precise.png", f"{stft_title} | log",
-            args.cmap, args.db_floor)
-        render_static(C_db,
-            dict(sr=sr, hop_length=args.hop, fmin=args.fmin,
-                 bins_per_octave=args.bins_per_octave,
-                 x_axis="time", y_axis="cqt_hz"),
-            cqt_png,
-            f"CQT {n_bins_cqt} bins, {args.bins_per_octave}/octave, fmin={args.fmin} Hz",
-            args.cmap, args.db_floor)
+        if want_lin:
+            render_static(S_db,
+                dict(sr=sr, hop_length=args.hop, x_axis="time", y_axis="linear"),
+                f"{base}_spectrum_lin_precise.png", f"{stft_title} | linear",
+                args.cmap, args.db_floor)
+        if want_log:
+            render_static(S_db,
+                dict(sr=sr, hop_length=args.hop, x_axis="time", y_axis="log"),
+                f"{base}_spectrum_log_precise.png", f"{stft_title} | log",
+                args.cmap, args.db_floor)
+        if want_cqt:
+            render_static(C_db,
+                dict(sr=sr, hop_length=args.hop, fmin=args.fmin,
+                     bins_per_octave=args.bins_per_octave,
+                     x_axis="time", y_axis="cqt_hz"),
+                cqt_png,
+                f"CQT {n_bins_cqt} bins, {args.bins_per_octave}/octave, fmin={args.fmin} Hz",
+                args.cmap, args.db_floor)
 
     if not args.no_video:
-        make_scroll(S_db, args.wav, base, "lin", duration,
-                    args.pps, video_w, video_h, args.cmap, args.db_floor)
-        make_scroll(log_remap(S_db, sr, args.n_fft, args.n_log_rows, args.fmin),
-                    args.wav, base, "log", duration,
-                    args.pps, video_w, video_h, args.cmap, args.db_floor)
-        make_scroll(C_db, args.wav, base, "cqt_scroll", duration,
-                    args.pps, video_w, video_h, args.cmap, args.db_floor)
-        if os.path.exists(cqt_png):
-            encode_static_video(cqt_png, args.wav, f"{base}_spectrum_cqt.mkv",
-                                duration, args.playhead_color)
+        if want_lin:
+            make_scroll(S_db, args.wav, base, "lin", duration,
+                        args.pps, video_w, video_h, args.cmap, args.db_floor)
+        if want_log:
+            make_scroll(log_remap(S_db, sr, args.n_fft, args.n_log_rows, args.fmin),
+                        args.wav, base, "log", duration,
+                        args.pps, video_w, video_h, args.cmap, args.db_floor)
+        if want_cqt:
+            make_scroll(C_db, args.wav, base, "cqt_scroll", duration,
+                        args.pps, video_w, video_h, args.cmap, args.db_floor)
+            if os.path.exists(cqt_png):
+                encode_static_video(cqt_png, args.wav, f"{base}_spectrum_cqt.mkv",
+                                    duration, args.playhead_color)
 
 
 if __name__ == "__main__":

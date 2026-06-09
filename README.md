@@ -40,6 +40,17 @@ imageToSound input.png --output-dir out --log-scale --multiresolution
 bash check.sh out/input.wav
 ```
 
+## Demo
+
+```sh
+bash demo_alphabet.sh
+```
+
+Renders an A–Z alphabet image and runs both synthesis pipelines on it,
+producing a linear precise STFT spectrogram + scroll video for the Swift
+(linear) output, and a CQT spectrogram + scroll video for the Python (log)
+output. Tune via env vars `FRAMES_PER_PIXEL=200 PPS=256`.
+
 ---
 
 ## `imageToSound` (Swift CLI)
@@ -126,6 +137,7 @@ python spectrogram.py <wav> [options]
 | `--playhead-color <expr>` | `cyan@0.9` | ffmpeg color expr for static-video playhead |
 | `--no-static` | off | skip static PNGs |
 | `--no-video` | off | skip videos |
+| `--mode <lin\|log\|cqt\|all>` | `all` | which analyses to render |
 
 Outputs (per input WAV named `foo.wav`):
 
