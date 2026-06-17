@@ -96,7 +96,10 @@ def main():
     ap.add_argument("wav", help="input WAV file")
     ap.add_argument("--cmap", default="inferno", help="matplotlib colormap name")
     ap.add_argument("--db-floor", type=float, default=-80.0, help="dynamic range floor in dB")
-    ap.add_argument("--pps", type=int, default=64, help="scroll rate in pixels per second of audio")
+    ap.add_argument("--pps", type=int, default=22,
+                    help="scroll rate (px/sec of audio). For a round/undistorted image, "
+                         "pps = video_height / image_height * samplerate / frames_per_pixel. "
+                         "Default 22 = 44100/2000 (square when video height = image height).")
     ap.add_argument("--video-size", type=parse_size, default=(1920, 1080), help="video frame size WxH")
     ap.add_argument("--n-log-rows", type=int, default=1080, help="row resolution for log-remapped video")
     ap.add_argument("--fmin", type=float, default=20.0, help="lowest frequency (Hz) for CQT and log remapping")

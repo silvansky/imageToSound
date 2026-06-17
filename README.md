@@ -126,7 +126,7 @@ python spectrogram.py <wav> [options]
 | `<wav>` | required | input audio |
 | `--cmap <name>` | `inferno` | matplotlib colormap |
 | `--db-floor <float>` | `-80.0` | dynamic-range floor in dB |
-| `--pps <int>` | `64` | scroll rate (pixels per second of audio) |
+| `--pps <int>` | `22` | scroll rate (pixels per second of audio); see [Preserving aspect ratio](#preserving-aspect-ratio) |
 | `--video-size <WxH>` | `1920x1080` | output video size |
 | `--n-log-rows <int>` | `1080` | row resolution for log-axis video (linear STFT remapped to log) |
 | `--fmin <float>` | `20.0` | lowest frequency for CQT and log remap |
@@ -162,6 +162,45 @@ local `.venv_cqt` is available. All outputs land next to the input WAV.
 
 ---
 
+## Preserving aspect ratio
+
+The scrolling video should reproduce the source image undistorted — a circle
+drawn in the image must render as a circle, not an ellipse. This is the
+preferred (default) behaviour.
+
+The synthesis spreads the full image **height** across the full frequency axis,
+which the video draws in `video_height` pixels. Each image **column** becomes
+`frames-per-pixel` audio samples, which scroll past at `pps` pixels per second.
+For square pixels the two scales must match:
+
+```
+pps = video_height / image_height × samplerate / frames-per-pixel
+```
+
+When the **video height equals the image height** this reduces to the matched
+default pair:
+
+```
+pps = samplerate / frames-per-pixel          # 44100 / 2000 = 22  (the default)
+```
+
+So the defaults align out of the box: synthesis `--frames-per-pixel 2000`,
+`--samplerate 44100`, and spectrogram `--pps 22` give an undistorted image when
+the source is as tall as the video frame (default `--video-size 1920x1080`).
+
+For a source of a different height, either set the video height to match the
+image and keep `pps = samplerate / frames-per-pixel`, or scale `pps`:
+
+| Image height | frames-per-pixel | video-size | pps |
+|--------------|------------------|------------|-----|
+| 1080 | 2000 | 1920x1080 | 22 (default) |
+| 768  | 2000 | 1920x1080 | 31 |
+| 768  | 1000 | 1920x1080 | 62 (audio plays 2× faster) |
+| any H | F | 1920xH | 44100 / F |
+
+Halving `frames-per-pixel` halves the audio duration (plays 2× faster) and
+doubles the required `pps`.
+
 ## Pipeline cheat sheet
 
 | Need | Tool |
@@ -171,3 +210,4 @@ local `.venv_cqt` is available. All outputs land next to the input WAV.
 | Linear axis + adaptive resolution | Swift `--multiresolution` |
 | Log axis + adaptive resolution (best low-freq detail) | Python `cqt_synth.py` (CQT) |
 | Verify output against source | `bash check.sh out/foo.wav` |
+| Undistorted (round) image in video | match `pps` to the wav — see [Preserving aspect ratio](#preserving-aspect-ratio) |
