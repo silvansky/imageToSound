@@ -159,7 +159,7 @@ def main():
             render_static(S_db,
                 dict(sr=sr, hop_length=args.hop, x_axis="time", y_axis="linear"),
                 f"{base}_spectrum_lin_precise.png", f"{stft_title} | linear",
-                args.cmap, args.db_floor, ymax=args.fmax)
+                args.cmap, args.db_floor, ymin=args.fmin, ymax=args.fmax)
         if want_log:
             render_static(S_db,
                 dict(sr=sr, hop_length=args.hop, x_axis="time", y_axis="log"),
@@ -179,7 +179,8 @@ def main():
             S_vid = S_db
             if args.fmax is not None:
                 max_bin = int(args.fmax * args.n_fft / sr) + 1
-                S_vid = S_db[:max_bin]
+                min_bin = int(args.fmin * args.n_fft / sr)
+                S_vid = S_db[min_bin:max_bin]
             make_scroll(S_vid, args.wav, base, "lin", duration,
                         args.pps, video_w, video_h, args.cmap, args.db_floor)
         if want_log:

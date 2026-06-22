@@ -43,8 +43,8 @@ struct ImageToSound: ParsableCommand {
     @Option(help: "Output frames per pixel")
     var framesPerPixel: Int = 2000
 
-    @Option(help: "FFT size (power of 2)")
-    var fftSize: Int = 2048
+    @Option(help: "FFT size (power of 2, or 'auto' to derive from image height and frequency range)")
+    var fftSize: String = "auto"
 
     @Option(help: "Hop size in samples (0 = fftSize/4)")
     var hopSize: Int = 0
@@ -104,8 +104,11 @@ struct ImageToSound: ParsableCommand {
                 Band(fftSize: 1024,  hopSize: 256,  freqLow: 2500, freqLowFull: 5000, freqHighFull: nyq,  freqHigh: nyq),
             ]
         } else {
-            let hop = hopSize > 0 ? hopSize : fftSize / 4
-            bands = [Band(fftSize: fftSize, hopSize: hop, freqLow: -1, freqLowFull: -1, freqHighFull: nyq + 1, freqHigh: nyq + 1)]
+            let maxFreq = maxFrequency < 0 ? nyq : Float(maxFrequency)
+            let minFreq = max(1, Float(minFrequency))
+            let fft = try resolveFFTSize(height: height, sampleRate: sampleRate, minFreq: minFreq, maxFreq: maxFreq)
+            let hop = hopSize > 0 ? hopSize : fft / 4
+            bands = [Band(fftSize: fft, hopSize: hop, freqLow: -1, freqLowFull: -1, freqHighFull: nyq + 1, freqHigh: nyq + 1)]
         }
 
         print("Image \(width)×\(height) → \(audioLength) samples (\(String(format: "%.2f", Float(audioLength)/sampleRate))s), logScale=\(logScale), multires=\(multiresolution)")
@@ -134,6 +137,23 @@ struct ImageToSound: ParsableCommand {
         let url = URL(fileURLWithPath: "\(outputDir)/\(imageBasename).wav")
         try writeWAV(samples: normalized, url: url, sampleRate: samplerate)
         print("Wrote \(url.path)")
+    }
+
+    // Pick an FFT size giving ~one bin per image row inside the active band,
+    // rounded to the nearest power of two and clamped to a sane range.
+    func resolveFFTSize(height: Int, sampleRate: Float, minFreq: Float, maxFreq: Float) throws -> Int {
+        if fftSize == "auto" {
+            let target = Float(height) * sampleRate / max(1, maxFreq - minFreq)
+            let exp = log2(target).rounded()
+            let p = Int(pow(2, exp))
+            let fft = min(max(p, 1024), 16384)
+            print("Auto FFT size: \(fft) (\(String(format: "%.2f", sampleRate / Float(fft))) Hz/bin)")
+            return fft
+        }
+        guard let n = Int(fftSize), n > 0, (n & (n - 1)) == 0 else {
+            throw ValidationError("--fft-size must be 'auto' or a positive power of two, got '\(fftSize)'")
+        }
+        return n
     }
 
     func synthesize(band: Band, data: UnsafePointer<UInt8>, width: Int, height: Int, bytesPerPixel: Int, bytesPerRow: Int, audioLength: Int) -> [Float] {
