@@ -4,7 +4,7 @@ Encode images into audio whose spectrogram reconstructs the image.
 
 Two synthesis pipelines:
 
-- **Swift `imageToSound`** — iSTFT + Fast Griffin-Lim. Linear or log frequency axis, optional multiresolution STFT (3 bands with different FFT sizes).
+- **Swift `imageToSound`** — iSTFT + Fast Griffin-Lim (or narrow-band noise via `--noise`). Linear or log frequency axis, auto-derived or explicit FFT size, optional multiresolution STFT (3 bands with different FFT sizes).
 - **Python `cqt_synth.py`** — Constant-Q Transform + Griffin-Lim. Log-frequency only, with adaptive time-frequency resolution.
 
 Plus `spectrogram.py` for high-resolution verification (images + videos).
@@ -33,6 +33,9 @@ imageToSound input.png --output-dir out
 # Image → audio (Swift, log scale, multiresolution)
 imageToSound input.png --output-dir out --log-scale --multiresolution
 
+# Image → audio (Swift, narrow-band noise, limited to a frequency range)
+imageToSound input.png --output-dir out --noise --min-frequency 98 --max-frequency 1175
+
 # Image → audio (Python, CQT)
 .venv_cqt/bin/python cqt_synth.py input.png --output-dir out
 
@@ -55,8 +58,9 @@ output. Tune via env vars `FRAMES_PER_PIXEL=200 PPS=256`.
 
 ## `imageToSound` (Swift CLI)
 
-Reads an image, builds a magnitude spectrogram from its pixels, runs Griffin-Lim
-phase reconstruction, writes a WAV.
+Reads an image, builds a magnitude spectrogram from its pixels, reconstructs
+phase (Fast Griffin-Lim, or independent random phase per bin with `--noise` for
+narrow-band-noise synthesis), writes a WAV.
 
 ```
 imageToSound <image-path> [options]
@@ -67,13 +71,14 @@ imageToSound <image-path> [options]
 | `<image-path>` | required | source image |
 | `--samplerate <int>` | `44100` | output sample rate |
 | `--min-frequency <int>` | `20` | lowest mapped frequency (Hz) |
-| `--max-frequency <int>` | `samplerate/2` | highest mapped frequency (Hz) |
+| `--max-frequency <int>` | `samplerate/2` | highest mapped frequency (Hz); honored in both linear and log scale |
 | `--frames-per-pixel <int>` | `2000` | audio samples per image column (controls duration) |
-| `--fft-size <int>` | `2048` | STFT window size (single-band mode) |
+| `--fft-size <int\|auto>` | `auto` | STFT window size (single-band mode); `auto` derives a power-of-two giving ~one bin per image row across the frequency range, clamped to `[1024, 16384]` |
 | `--hop-size <int>` | `fft-size/4` | STFT hop |
-| `--gl-iterations <int>` | `60` | Griffin-Lim iterations |
+| `--gl-iterations <int>` | `60` | Griffin-Lim iterations (ignored with `--noise`) |
 | `--gl-momentum <float>` | `0.99` | Fast Griffin-Lim momentum (`0` = classic GL) |
 | `--mag-curve <float>` | `2.0` | brightness → magnitude power-law (>1 emphasizes bright pixels) |
+| `--noise` | off | synthesize with narrow-band white noise (random phase per bin, no Griffin-Lim) instead of sines |
 | `--invert` | off | invert image brightness |
 | `--log-scale` | off | logarithmic frequency mapping |
 | `--multiresolution` | off | 3-band STFT (16384/4096/1024 at low/mid/high freq with cosine crossfades) |
@@ -129,7 +134,8 @@ python spectrogram.py <wav> [options]
 | `--pps <int>` | `22` | scroll rate (pixels per second of audio); see [Preserving aspect ratio](#preserving-aspect-ratio) |
 | `--video-size <WxH>` | `1920x1080` | output video size |
 | `--n-log-rows <int>` | `1080` | row resolution for log-axis video (linear STFT remapped to log) |
-| `--fmin <float>` | `20.0` | lowest frequency for CQT and log remap |
+| `--fmin <float>` | `20.0` | lowest frequency for CQT and log remap; also sets the lower axis bound of lin/log renders when `--fmax` is given |
+| `--fmax <float>` | `samplerate/2` | highest frequency rendered; crops the lin/log axes (static + video) to `[fmin, fmax]` |
 | `--n-fft <int>` | `32768` | STFT window size (1.35 Hz/bin at sr=44100) |
 | `--hop <int>` | `2048` | STFT/CQT hop |
 | `--bins-per-octave <int>` | `96` | CQT density |
@@ -207,6 +213,8 @@ doubles the required `pps`.
 |------|------|
 | Image looks correct on **linear** spectrogram | Swift `imageToSound` (default) |
 | Image looks correct on **log** spectrogram | Swift `--log-scale` or Python `cqt_synth.py` |
+| Noisy / textured timbre instead of tonal sines | Swift `--noise` |
+| Restrict image to a frequency band (e.g. piano range) | Swift `--min-frequency`/`--max-frequency` + `spectrogram.py --fmin`/`--fmax` |
 | Linear axis + adaptive resolution | Swift `--multiresolution` |
 | Log axis + adaptive resolution (best low-freq detail) | Python `cqt_synth.py` (CQT) |
 | Verify output against source | `bash check.sh out/foo.wav` |
