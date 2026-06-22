@@ -142,7 +142,7 @@ struct ImageToSound: ParsableCommand {
         let numFrames = (signalLength - band.fftSize) / band.hopSize + 1
         let numBins = halfFFT + 1
         let sampleRate = Float(samplerate)
-        let maxFreq: Float = (logScale || maxFrequency < 0) ? sampleRate / 2 : Float(maxFrequency)
+        let maxFreq: Float = maxFrequency < 0 ? sampleRate / 2 : Float(maxFrequency)
         let minFreq: Float = max(1, Float(minFrequency))
 
         var magnitudes = [Float](repeating: 0, count: numFrames * numBins)
