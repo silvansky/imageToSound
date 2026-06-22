@@ -67,6 +67,9 @@ struct ImageToSound: ParsableCommand {
     @Flag(help: "Multiresolution STFT (3 bands: large FFT at low freq, small at high)")
     var multiresolution: Bool = false
 
+    @Flag(help: "Synthesize with narrow-band white noise instead of sines (random phase, no Griffin-Lim)")
+    var noise: Bool = false
+
     @Option(help: "Output directory")
     var outputDir: String = "."
 
@@ -175,14 +178,24 @@ struct ImageToSound: ParsableCommand {
         }
 
         let proc = STFTProcessor(fftSize: band.fftSize, hopSize: band.hopSize)
-        let signal = proc.griffinLim(
-            magnitude: magnitudes,
-            numFrames: numFrames,
-            numBins: numBins,
-            iterations: glIterations,
-            momentum: glMomentum,
-            signalLength: signalLength
-        )
+        let signal: [Float]
+        if noise {
+            signal = proc.noiseSynth(
+                magnitude: magnitudes,
+                numFrames: numFrames,
+                numBins: numBins,
+                signalLength: signalLength
+            )
+        } else {
+            signal = proc.griffinLim(
+                magnitude: magnitudes,
+                numFrames: numFrames,
+                numBins: numBins,
+                iterations: glIterations,
+                momentum: glMomentum,
+                signalLength: signalLength
+            )
+        }
         return Array(signal[halfFFT..<(halfFFT + audioLength)])
     }
 
@@ -291,6 +304,18 @@ final class STFTProcessor {
             }
         }
         return signal
+    }
+
+    func noiseSynth(magnitude: [Float], numFrames: Int, numBins: Int, signalLength: Int) -> [Float] {
+        let total = numFrames * numBins
+        var real = [Float](repeating: 0, count: total)
+        var imag = [Float](repeating: 0, count: total)
+        for i in 0..<total {
+            let phase = Float.random(in: 0..<(2 * .pi))
+            real[i] = magnitude[i] * cos(phase)
+            imag[i] = magnitude[i] * sin(phase)
+        }
+        return istft(real: real, imag: imag, numFrames: numFrames, numBins: numBins, signalLength: signalLength)
     }
 
     func griffinLim(magnitude: [Float], numFrames: Int, numBins: Int, iterations: Int, momentum: Float, signalLength: Int) -> [Float] {
