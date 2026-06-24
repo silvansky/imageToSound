@@ -28,11 +28,14 @@ import matplotlib.pyplot as plt
 from PIL import Image as PILImage
 
 
-def render_static(spec_db, kwargs, out_path, title, cmap, db_floor, ymin=None, ymax=None):
-    fig, ax = plt.subplots(figsize=(19.2, 10.8), dpi=100)
+def render_static(spec_db, kwargs, out_path, title, cmap, db_floor, ymin=None, ymax=None, aspect=16 / 9):
+    h = 10.8
+    fig, ax = plt.subplots(figsize=(max(2.0, h * aspect), h), dpi=100)
     librosa.display.specshow(spec_db, ax=ax, cmap=cmap, vmin=db_floor, vmax=0, **kwargs)
     if ymax is not None:
         ax.set_ylim(ymin if ymin is not None else 0, ymax)
+    # Lock the data box to the requested aspect so objects keep image proportions.
+    ax.set_box_aspect(1 / aspect)
     ax.set_title(title, color="white")
     ax.tick_params(colors="white")
     for spine in ax.spines.values():
@@ -54,16 +57,17 @@ def log_remap(spec_lin_db, sr, n_fft, n_rows, fmin, fmax=None):
     return out
 
 
-def encode_scroll_video(wide_png, wav, out_path, duration, wide_w, video_w, video_h):
+def encode_scroll_video(wide_png, wav, out_path, duration, wide_w, view_w, video_h):
     # Scroll at the wide image's actual pixel density so the playhead stays in
-    # sync with the audio even when wide_w was clamped up to video_w.
+    # sync with the audio. view_w is the viewport width (<= wide_w); a narrower
+    # timeline is shown at natural density rather than stretched to fill.
     rate = wide_w / duration
     cmd = [
         "ffmpeg", "-y", "-loop", "1", "-framerate", "30",
         "-i", wide_png, "-i", wav,
         "-filter_complex",
-        f"[0:v]pad=iw+{video_w}:ih:{video_w}:0:color=black,"
-        f"crop={video_w}:{video_h}:{rate}*t:0,format=yuv420p[v]",
+        f"[0:v]pad=iw+{view_w}:ih:{view_w}:0:color=black,"
+        f"crop={view_w}:{video_h}:{rate}*t:0,format=yuv420p[v]",
         "-map", "[v]", "-map", "1:a",
         "-c:v", "libx264", "-c:a", "aac",
         "-t", f"{duration:.3f}", "-shortest", out_path,
@@ -76,7 +80,11 @@ def encode_scroll_video(wide_png, wav, out_path, duration, wide_w, video_w, vide
 
 
 def make_scroll(spec_db, wav, base, suffix, duration, pps, video_w, video_h, cmap_name, db_floor):
-    wide_w = max(video_w, int(pps * duration))
+    # Natural timeline width keeps pixel density at pps, so objects stay
+    # undistorted. The viewport is the full width only when the timeline is
+    # wider; a shorter timeline is letterboxed instead of stretched.
+    wide_w = max(2, int(round(pps * duration)))
+    view_w = max(2, min(video_w, wide_w) // 2 * 2)
     arr = (np.clip(spec_db, db_floor, 0) - db_floor) / (-db_floor)
     arr = arr[::-1]
     pim = PILImage.fromarray((arr * 255).astype(np.uint8), mode="L")
@@ -87,7 +95,7 @@ def make_scroll(spec_db, wav, base, suffix, duration, pps, video_w, video_h, cma
     wide_png = f"{base}_spectrum_{suffix}_wide.png"
     PILImage.fromarray(colored).save(wide_png)
     out_mkv = f"{base}_spectrum_{suffix}.mkv"
-    encode_scroll_video(wide_png, wav, out_mkv, duration, wide_w, video_w, video_h)
+    encode_scroll_video(wide_png, wav, out_mkv, duration, wide_w, view_w, video_h)
     os.remove(wide_png)
 
 
@@ -123,6 +131,7 @@ def main():
     args = ap.parse_args()
 
     video_w, video_h = args.video_size
+    aspect = video_w / video_h
 
     y, sr = sf.read(args.wav)
     if y.ndim > 1:
@@ -159,12 +168,12 @@ def main():
             render_static(S_db,
                 dict(sr=sr, hop_length=args.hop, x_axis="time", y_axis="linear"),
                 f"{base}_spectrum_lin_precise.png", f"{stft_title} | linear",
-                args.cmap, args.db_floor, ymin=args.fmin, ymax=args.fmax)
+                args.cmap, args.db_floor, ymin=args.fmin, ymax=args.fmax, aspect=aspect)
         if want_log:
             render_static(S_db,
                 dict(sr=sr, hop_length=args.hop, x_axis="time", y_axis="log"),
                 f"{base}_spectrum_log_precise.png", f"{stft_title} | log",
-                args.cmap, args.db_floor, ymin=args.fmin, ymax=args.fmax)
+                args.cmap, args.db_floor, ymin=args.fmin, ymax=args.fmax, aspect=aspect)
         if want_cqt:
             render_static(C_db,
                 dict(sr=sr, hop_length=args.hop, fmin=args.fmin,
@@ -172,7 +181,7 @@ def main():
                      x_axis="time", y_axis="cqt_hz"),
                 cqt_png,
                 f"CQT {n_bins_cqt} bins, {args.bins_per_octave}/octave, fmin={args.fmin} Hz",
-                args.cmap, args.db_floor)
+                args.cmap, args.db_floor, aspect=aspect)
 
     if not args.no_video:
         if want_lin:

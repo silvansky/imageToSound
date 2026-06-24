@@ -146,7 +146,7 @@ struct ImageToSound: ParsableCommand {
             let target = Float(height) * sampleRate / max(1, maxFreq - minFreq)
             let exp = log2(target).rounded()
             let p = Int(pow(2, exp))
-            let fft = min(max(p, 1024), 16384)
+            let fft = min(max(p, 1024), 65536)
             print("Auto FFT size: \(fft) (\(String(format: "%.2f", sampleRate / Float(fft))) Hz/bin)")
             return fft
         }

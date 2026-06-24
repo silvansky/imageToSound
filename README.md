@@ -73,7 +73,7 @@ imageToSound <image-path> [options]
 | `--min-frequency <int>` | `20` | lowest mapped frequency (Hz) |
 | `--max-frequency <int>` | `samplerate/2` | highest mapped frequency (Hz); honored in both linear and log scale |
 | `--frames-per-pixel <int>` | `2000` | audio samples per image column (controls duration) |
-| `--fft-size <int\|auto>` | `auto` | STFT window size (single-band mode); `auto` derives a power-of-two giving ~one bin per image row across the frequency range, clamped to `[1024, 16384]` |
+| `--fft-size <int\|auto>` | `auto` | STFT window size (single-band mode); `auto` derives a power-of-two giving ~one bin per image row across the frequency range, clamped to `[1024, 65536]` (large values resolve tall images in narrow bands at the cost of horizontal time smear) |
 | `--hop-size <int>` | `fft-size/4` | STFT hop |
 | `--gl-iterations <int>` | `60` | Griffin-Lim iterations (ignored with `--noise`) |
 | `--gl-momentum <float>` | `0.99` | Fast Griffin-Lim momentum (`0` = classic GL) |
