@@ -5,7 +5,7 @@ Encode images into audio whose spectrogram reconstructs the image.
 Three synthesis pipelines:
 
 - **Swift `imageToSound`** — iSTFT + Fast Griffin-Lim (or narrow-band noise via `--noise`). Linear or log frequency axis, auto-derived or explicit FFT size, optional multiresolution STFT (3 bands with different FFT sizes).
-- **Swift `imageToSound --vans`** — Virtual ANS-style additive synthesis. A wavetable sine bank with one (or several detuned) oscillator(s) per pixel row, log-spaced, random initial phases, per-sample amplitude ramping. Log-scale only. Bypasses STFT/Griffin-Lim.
+- **Swift `imageToSound --vans`** — Virtual ANS-style additive synthesis (the name is short for **V**irtual **ANS**). A wavetable sine bank with one (or several detuned) oscillator(s) per pixel row, log-spaced, random initial phases, per-sample amplitude ramping. Log-scale only. Bypasses STFT/Griffin-Lim. Based on the [Virtual ANS](https://warmplace.ru/soft/ans/) synthesizer, itself a model of the Soviet ANS optical synth (named after composer Alexander Nikolayevich Scriabin).
 - **Python `cqt_synth.py`** — Constant-Q Transform + Griffin-Lim. Log-frequency only, with adaptive time-frequency resolution.
 
 Plus `spectrogram.py` for high-resolution verification (images + videos).
