@@ -70,8 +70,32 @@ struct ImageToSound: ParsableCommand {
     @Flag(help: "Synthesize with narrow-band white noise instead of sines (random phase, no Griffin-Lim)")
     var noise: Bool = false
 
+    @Flag(help: "Virtual ANS additive synth: a wavetable sine bank, one oscillator per pixel row (log scale only). Bypasses STFT/Griffin-Lim.")
+    var vans: Bool = false
+
+    @Option(help: "Oscillators per row in --vans mode (≥1; multiple detuned voices decorrelate low-freq partials)")
+    var vansVoices: Int = 2
+
+    @Option(help: "Detune spread for --vans voices, as a fraction of one row's log-frequency spacing (0..1)")
+    var vansSpread: Float = 0.5
+
     @Option(help: "Output directory")
     var outputDir: String = "."
+
+    func validate() throws {
+        if vans && !logScale {
+            throw ValidationError("--vans requires --log-scale")
+        }
+        if vans && multiresolution {
+            throw ValidationError("--vans is incompatible with --multiresolution")
+        }
+        if vans && noise {
+            throw ValidationError("--vans is incompatible with --noise")
+        }
+        if vansVoices < 1 {
+            throw ValidationError("--vans-voices must be ≥ 1")
+        }
+    }
 
     var imageBasename: String {
         let url = URL(filePath: imagePath) as NSURL
@@ -96,35 +120,45 @@ struct ImageToSound: ParsableCommand {
         let sampleRate = Float(samplerate)
         let nyq = sampleRate / 2
 
-        let bands: [Band]
-        if multiresolution {
-            bands = [
-                Band(fftSize: 16384, hopSize: 4096, freqLow: 0,    freqLowFull: 0,    freqHighFull: 250,  freqHigh: 500),
-                Band(fftSize: 4096,  hopSize: 1024, freqLow: 250,  freqLowFull: 500,  freqHighFull: 2500, freqHigh: 5000),
-                Band(fftSize: 1024,  hopSize: 256,  freqLow: 2500, freqLowFull: 5000, freqHighFull: nyq,  freqHigh: nyq),
-            ]
-        } else {
-            let maxFreq = maxFrequency < 0 ? nyq : Float(maxFrequency)
-            let minFreq = max(1, Float(minFrequency))
-            let fft = try resolveFFTSize(height: height, sampleRate: sampleRate, minFreq: minFreq, maxFreq: maxFreq)
-            let hop = hopSize > 0 ? hopSize : fft / 4
-            bands = [Band(fftSize: fft, hopSize: hop, freqLow: -1, freqLowFull: -1, freqHighFull: nyq + 1, freqHigh: nyq + 1)]
-        }
-
-        print("Image \(width)×\(height) → \(audioLength) samples (\(String(format: "%.2f", Float(audioLength)/sampleRate))s), logScale=\(logScale), multires=\(multiresolution)")
+        print("Image \(width)×\(height) → \(audioLength) samples (\(String(format: "%.2f", Float(audioLength)/sampleRate))s), logScale=\(logScale), multires=\(multiresolution), vans=\(vans)")
 
         var combined = [Float](repeating: 0, count: audioLength)
-        for (i, band) in bands.enumerated() {
-            print("Band \(i+1)/\(bands.count): FFT=\(band.fftSize), hop=\(band.hopSize), \(Int(band.freqLow))..\(Int(band.freqHigh)) Hz")
-            let signal = synthesize(
-                band: band,
+        if vans {
+            let signal = synthesizeVANS(
                 data: data,
                 width: width, height: height,
                 bytesPerPixel: bytesPerPixel, bytesPerRow: bytesPerRow,
                 audioLength: audioLength
             )
-            for j in 0..<audioLength {
-                combined[j] += signal[j]
+            combined = signal
+        } else {
+            let bands: [Band]
+            if multiresolution {
+                bands = [
+                    Band(fftSize: 16384, hopSize: 4096, freqLow: 0,    freqLowFull: 0,    freqHighFull: 250,  freqHigh: 500),
+                    Band(fftSize: 4096,  hopSize: 1024, freqLow: 250,  freqLowFull: 500,  freqHighFull: 2500, freqHigh: 5000),
+                    Band(fftSize: 1024,  hopSize: 256,  freqLow: 2500, freqLowFull: 5000, freqHighFull: nyq,  freqHigh: nyq),
+                ]
+            } else {
+                let maxFreq = maxFrequency < 0 ? nyq : Float(maxFrequency)
+                let minFreq = max(1, Float(minFrequency))
+                let fft = try resolveFFTSize(height: height, sampleRate: sampleRate, minFreq: minFreq, maxFreq: maxFreq)
+                let hop = hopSize > 0 ? hopSize : fft / 4
+                bands = [Band(fftSize: fft, hopSize: hop, freqLow: -1, freqLowFull: -1, freqHighFull: nyq + 1, freqHigh: nyq + 1)]
+            }
+
+            for (i, band) in bands.enumerated() {
+                print("Band \(i+1)/\(bands.count): FFT=\(band.fftSize), hop=\(band.hopSize), \(Int(band.freqLow))..\(Int(band.freqHigh)) Hz")
+                let signal = synthesize(
+                    band: band,
+                    data: data,
+                    width: width, height: height,
+                    bytesPerPixel: bytesPerPixel, bytesPerRow: bytesPerRow,
+                    audioLength: audioLength
+                )
+                for j in 0..<audioLength {
+                    combined[j] += signal[j]
+                }
             }
         }
 
@@ -154,6 +188,114 @@ struct ImageToSound: ParsableCommand {
             throw ValidationError("--fft-size must be 'auto' or a positive power of two, got '\(fftSize)'")
         }
         return n
+    }
+
+    func synthesizeVANS(data: UnsafePointer<UInt8>, width: Int, height: Int, bytesPerPixel: Int, bytesPerRow: Int, audioLength: Int) -> [Float] {
+        let sampleRate = Float(samplerate)
+        let nyq = sampleRate / 2
+        let maxFreq = min(nyq, maxFrequency < 0 ? nyq : Float(maxFrequency))
+        let minFreq = max(1, Float(minFrequency))
+        precondition(maxFreq > minFreq, "VANS: max-frequency must exceed min-frequency")
+
+        let tableSize = 32768
+        let tableSizeF = Float(tableSize)
+        let tableMask = tableSize - 1
+        var sineTable = [Float](repeating: 0, count: tableSize)
+        for i in 0..<tableSize {
+            sineTable[i] = sin(2 * .pi * Float(i) / tableSizeF)
+        }
+
+        let voices = max(1, vansVoices)
+        let totalOscs = height * voices
+        let voiceScale: Float = 1.0 / Float(voices)
+
+        let logMin = log(minFreq)
+        let logMax = log(maxFreq)
+        let rowLogStep = (logMax - logMin) / Float(max(1, height - 1))
+
+        var phaseInc = [Float](repeating: 0, count: totalOscs)
+        var phase = [Float](repeating: 0, count: totalOscs)
+        for row in 0..<height {
+            let logF = logMin + rowLogStep * Float(height - 1 - row)
+            for v in 0..<voices {
+                let voiceOff: Float = voices == 1 ? 0 :
+                    (Float(v) / Float(voices - 1) - 0.5) * vansSpread * rowLogStep
+                let f = exp(logF + voiceOff)
+                let idx = row * voices + v
+                phaseInc[idx] = f * tableSizeF / sampleRate
+                phase[idx] = Float.random(in: 0..<tableSizeF)
+            }
+        }
+
+        var colAmps = [Float](repeating: 0, count: width * height)
+        for col in 0..<width {
+            for row in 0..<height {
+                let pi = row * bytesPerRow + col * bytesPerPixel
+                let r = Float(data[pi]) / 255.0
+                let g = Float(data[pi + 1]) / 255.0
+                let b = Float(data[pi + 2]) / 255.0
+                var br = 0.299 * r + 0.587 * g + 0.114 * b
+                if invert { br = 1 - br }
+                colAmps[col * height + row] = pow(br, magCurve)
+            }
+        }
+
+        print("VANS: \(totalOscs) oscillators (\(height) rows × \(voices) voices), log \(Int(minFreq))..\(Int(maxFreq)) Hz, spread=\(vansSpread)")
+
+        var output = [Float](repeating: 0, count: audioLength)
+        var amp = [Float](repeating: 0, count: height)
+        var ampDelta = [Float](repeating: 0, count: height)
+        let fpp = framesPerPixel
+
+        sineTable.withUnsafeBufferPointer { tablePtr in
+            phase.withUnsafeMutableBufferPointer { phasePtr in
+                phaseInc.withUnsafeBufferPointer { incPtr in
+                    amp.withUnsafeMutableBufferPointer { ampPtr in
+                        ampDelta.withUnsafeMutableBufferPointer { dPtr in
+                            output.withUnsafeMutableBufferPointer { outPtr in
+                                colAmps.withUnsafeBufferPointer { caPtr in
+                                    for col in Progress(0..<width) {
+                                        let startSample = col * fpp
+                                        let endSample = min(startSample + fpp, audioLength)
+                                        let span = endSample - startSample
+                                        if span <= 0 { continue }
+                                        let spanF = Float(span)
+                                        let colBase = col * height
+                                        for row in 0..<height {
+                                            dPtr[row] = (caPtr[colBase + row] - ampPtr[row]) / spanF
+                                        }
+                                        for s in startSample..<endSample {
+                                            var val: Float = 0
+                                            for row in 0..<height {
+                                                let a = ampPtr[row]
+                                                let base = row * voices
+                                                let active = a > 1e-6
+                                                var acc: Float = 0
+                                                for v in 0..<voices {
+                                                    let idx = base + v
+                                                    var p = phasePtr[idx]
+                                                    if active {
+                                                        acc += tablePtr[Int(p) & tableMask]
+                                                    }
+                                                    p += incPtr[idx]
+                                                    if p >= tableSizeF { p -= tableSizeF }
+                                                    phasePtr[idx] = p
+                                                }
+                                                if active { val += acc * a * voiceScale }
+                                                ampPtr[row] += dPtr[row]
+                                            }
+                                            outPtr[s] = val
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return output
     }
 
     func synthesize(band: Band, data: UnsafePointer<UInt8>, width: Int, height: Int, bytesPerPixel: Int, bytesPerRow: Int, audioLength: Int) -> [Float] {

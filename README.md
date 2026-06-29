@@ -2,9 +2,10 @@
 
 Encode images into audio whose spectrogram reconstructs the image.
 
-Two synthesis pipelines:
+Three synthesis pipelines:
 
 - **Swift `imageToSound`** — iSTFT + Fast Griffin-Lim (or narrow-band noise via `--noise`). Linear or log frequency axis, auto-derived or explicit FFT size, optional multiresolution STFT (3 bands with different FFT sizes).
+- **Swift `imageToSound --vans`** — Virtual ANS-style additive synthesis. A wavetable sine bank with one (or several detuned) oscillator(s) per pixel row, log-spaced, random initial phases, per-sample amplitude ramping. Log-scale only. Bypasses STFT/Griffin-Lim.
 - **Python `cqt_synth.py`** — Constant-Q Transform + Griffin-Lim. Log-frequency only, with adaptive time-frequency resolution.
 
 Plus `spectrogram.py` for high-resolution verification (images + videos).
@@ -35,6 +36,9 @@ imageToSound input.png --output-dir out --log-scale --multiresolution
 
 # Image → audio (Swift, narrow-band noise, limited to a frequency range)
 imageToSound input.png --output-dir out --noise --min-frequency 98 --max-frequency 1175
+
+# Image → audio (Swift, Virtual ANS additive sine bank, log scale only)
+imageToSound input.png --output-dir out --vans --log-scale
 
 # Image → audio (Python, CQT)
 .venv_cqt/bin/python cqt_synth.py input.png --output-dir out
@@ -79,6 +83,9 @@ imageToSound <image-path> [options]
 | `--gl-momentum <float>` | `0.99` | Fast Griffin-Lim momentum (`0` = classic GL) |
 | `--mag-curve <float>` | `2.0` | brightness → magnitude power-law (>1 emphasizes bright pixels) |
 | `--noise` | off | synthesize with narrow-band white noise (random phase per bin, no Griffin-Lim) instead of sines |
+| `--vans` | off | Virtual ANS additive synth: wavetable sine bank, one oscillator per pixel row, log scale only; bypasses STFT/Griffin-Lim. Incompatible with `--noise`/`--multiresolution` |
+| `--vans-voices <int>` | `2` | oscillators per row in `--vans` mode (≥1; multiple detuned voices decorrelate low-freq partials) |
+| `--vans-spread <float>` | `0.5` | detune spread for `--vans` voices, as a fraction of one row's log-frequency spacing (`0..1`) |
 | `--invert` | off | invert image brightness |
 | `--log-scale` | off | logarithmic frequency mapping |
 | `--multiresolution` | off | 3-band STFT (16384/4096/1024 at low/mid/high freq with cosine crossfades) |
@@ -214,6 +221,7 @@ doubles the required `pps`.
 | Image looks correct on **linear** spectrogram | Swift `imageToSound` (default) |
 | Image looks correct on **log** spectrogram | Swift `--log-scale` or Python `cqt_synth.py` |
 | Noisy / textured timbre instead of tonal sines | Swift `--noise` |
+| Virtual ANS-style additive sine bank on log scale | Swift `--vans --log-scale` |
 | Restrict image to a frequency band (e.g. piano range) | Swift `--min-frequency`/`--max-frequency` + `spectrogram.py --fmin`/`--fmax` |
 | Linear axis + adaptive resolution | Swift `--multiresolution` |
 | Log axis + adaptive resolution (best low-freq detail) | Python `cqt_synth.py` (CQT) |
